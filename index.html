@@ -58,16 +58,17 @@ const COMISION_REPARTIDOR = 0.33;
 const CUOTA_REPARTIDOR = 40;
 
 // ---------- POSTRES ----------
-const postres = ["Carlota", "Pay de Queso", "Flan Napolitano", "Tiramisu"];
-const precios = [50, 65, 65, 100];
-const costos = [19, 23, 16.5, 32];
+const postres = ["Carlota", "Pay de Queso", "Flan Napolitano", "Tiramisu", "Galleta Nuez"];
+const precios = [50, 65, 65, 80, 60];
+const costos  = [19, 23, 16.5, 23, 19];
+const N = postres.length;
 
 // ---------- INPUTS ----------
 let inputs = [];
 let activeBoxIndex = -1;
 
 // ---------- RESULTADOS ----------
-let unidades = [0, 0, 0, 0];
+let unidades = new Array(N).fill(0);
 let totalPostres = 0;
 let capitalVendido = 0;
 let costoProduccion = 0;
@@ -105,8 +106,8 @@ function setup() {
   borde = color('#DDE2DD');
   rojo = color('#C20034');
 
-  for (let i = 0; i < 4; i++) {
-    inputs[i] = new TextBox(440, 335 + i * 185, 200, 92, i);
+  for (let i = 0; i < N; i++) {
+    inputs[i] = new TextBox(440, 320 + i * 150, 200, 84, i);
   }
 
   botonCEO = new BigButton(60, 660, 580, 170,
@@ -115,7 +116,7 @@ function setup() {
   botonRepartidor = new BigButton(60, 860, 580, 170,
     "Repartidor 1", "Corte y pago del repartidor");
 
-  botonCalcular = new Button(60, 1065, 580, 100, "CALCULAR", 28);
+  botonCalcular = new Button(60, 1100, 580, 100, "CALCULAR", 28);
   botonRegresar = new Button(40, 1290, 290, 92, "\u2190 REGRESAR", 26);
   botonAtras    = new Button(40, 60, 92, 78, "\u2190", 32);
 
@@ -199,7 +200,7 @@ function pantallaVentas() {
 
   fill(blanco);
   noStroke();
-  rect(40, 205, 620, 800, 26);
+  rect(40, 205, 620, 845, 26);
 
   fill(textoSecundario);
   textSize(21);
@@ -212,16 +213,16 @@ function pantallaVentas() {
   line(70, 292, 630, 292);
   noStroke();
 
-  for (let i = 0; i < 4; i++) {
-    let y = 335 + i * 185;
+  for (let i = 0; i < N; i++) {
+    let y = 320 + i * 150;
 
     fill(texto);
     textSize(28);
-    text(postres[i], 75, y + 46);
+    text(postres[i], 75, y + 42);
 
     fill(textoSecundario);
     textSize(26);
-    text("$" + formato(precios[i]), 330, y + 46);
+    text("$" + formato(precios[i]), 330, y + 42);
 
     inputs[i].display();
   }
@@ -231,7 +232,7 @@ function pantallaVentas() {
   fill(textoSecundario);
   textAlign(CENTER, CENTER);
   textSize(20);
-  text("Toca un campo para capturar las unidades", 350, 1225);
+  text("Toca un campo para capturar las unidades", 350, 1255);
   textAlign(LEFT, CENTER);
 }
 
@@ -489,7 +490,7 @@ function dibujarTeclado() {
   textAlign(LEFT, CENTER);
 
   // Boton principal
-  botonSiguiente.label = (activeBoxIndex < 3) ? "SIGUIENTE \u2192" : "LISTO";
+  botonSiguiente.label = (activeBoxIndex < N - 1) ? "SIGUIENTE \u2192" : "LISTO";
   botonSiguiente.display();
 
   // Teclas
@@ -539,7 +540,7 @@ function limpiarCampo() {
 }
 
 function siguienteCampo() {
-  if (activeBoxIndex < 3) inputs[activeBoxIndex + 1].activate();
+  if (activeBoxIndex < N - 1) inputs[activeBoxIndex + 1].activate();
   else cerrarTeclado();
 }
 
@@ -572,7 +573,7 @@ function calcularResultados() {
   cantidadMayor = 0;
   postreMasVendido = "-";
 
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < N; i++) {
 
     let valor = inputs[i].getText();
     let parsed = parseInt(valor, 10);
@@ -607,7 +608,7 @@ function calcularResultados() {
 // ============================================================
 
 function cerrarTeclado() {
-  for (let i = 0; i < 4; i++) inputs[i].active = false;
+  for (let i = 0; i < N; i++) inputs[i].active = false;
   activeBoxIndex = -1;
 }
 
@@ -644,7 +645,7 @@ function handlePress(mx, my) {
 
     if (botonAtras.isOver(mx, my)) { irAPerfil(); return; }
 
-    for (let i = 0; i < 4; i++) inputs[i].pressedAt(mx, my);
+    for (let i = 0; i < N; i++) inputs[i].pressedAt(mx, my);
 
     if (botonCalcular.isOver(mx, my)) calcularResultados();
 
@@ -669,7 +670,7 @@ function keyPressed() {
     if (keyCode === TAB)          { siguienteCampo();    return false; }
     if (keyCode === ESCAPE)       { cerrarTeclado();     return false; }
     if (keyCode === ENTER || keyCode === RETURN) {
-      if (activeBoxIndex < 3) siguienteCampo();
+      if (activeBoxIndex < N - 1) siguienteCampo();
       else { cerrarTeclado(); calcularResultados(); }
       return false;
     }

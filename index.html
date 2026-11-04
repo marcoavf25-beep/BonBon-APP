@@ -38,7 +38,7 @@
 // ============================================================
 
 const BASE_W = 700;
-const BASE_H = 1500;
+const BASE_H = 1560;
 
 // ---------- COLORES ----------
 let fondo, blanco, texto, textoSecundario, verde, verdeHover, borde, rojo;
@@ -51,7 +51,9 @@ let pantalla = 0;
 const RENTA  = 270;
 const LUZ    = 70;
 const GAS    = 14;
-const AHORRO = 150;
+
+// Comision del empleado: 18% de la venta total del dia
+const COMISION_EMPLEADO = 0.18;
 
 // ---------- PRODUCTOS ----------
 const postres = [
@@ -64,7 +66,7 @@ const postres = [
   "Pan de Elote"
 ];
 const precios = [55, 80, 65, 80, 60, 85, 60];
-const costos  = [19, 23, 16.5, 23, 19, 28, 20];
+const costos  = [19, 23, 16.5, 23, 19, 28, 17];
 const N = postres.length;
 
 // ---------- CAJAS DE CAPTURA ----------
@@ -77,8 +79,11 @@ let vendidos = new Array(N).fill(0);
 let totalPostres = 0;
 let ventaTotal = 0;
 let costoProduccion = 0;
+let comisionEmpleado = 0;
+let gastosBase = 0;
 let totalGastos = 0;
-let profitLibre = 0;
+let profitLibre = 0;        // con el pago al empleado
+let profitSinEmpleado = 0;  // si vendiste tu
 let postreMasVendido = "-";
 let cantidadMayor = 0;
 
@@ -113,10 +118,10 @@ function setup() {
     cajas.push(new TextBox(515, y, 140, 76, i, "uni"));
   }
 
-  botonInicio = new BigButton(60, 790, 580, 180,
+  botonInicio = new BigButton(60, 820, 580, 180,
     "Conteo Postres", "Inventario, ventas y ganancia del día");
 
-  botonCalcular = new Button(60, 1200, 580, 100, "CALCULAR", 28);
+  botonCalcular = new Button(60, 1230, 580, 100, "CALCULAR", 28);
   botonAtras    = new Button(40, 52, 92, 76, "←", 30);
 
   construirTeclado();
@@ -157,15 +162,15 @@ function pantallaInicio() {
   fill(rojo);
   textAlign(CENTER, CENTER);
   textSize(26);
-  text("BON BON", 350, 560);
+  text("BON BON", 350, 590);
 
   fill(texto);
   textSize(58);
-  text("Control de Ventas", 350, 635);
+  text("Control de Ventas", 350, 665);
 
   fill(textoSecundario);
   textSize(24);
-  text("Cierre del día", 350, 695);
+  text("Cierre del día", 350, 725);
 
   textAlign(LEFT, CENTER);
   botonInicio.display();
@@ -173,7 +178,7 @@ function pantallaInicio() {
   fill(textoSecundario);
   textAlign(CENTER, CENTER);
   textSize(19);
-  text("Precios y costos configurados en el sistema", 350, 1070);
+  text("Precios y costos configurados en el sistema", 350, 1100);
   textAlign(LEFT, CENTER);
 }
 
@@ -231,7 +236,7 @@ function pantallaCaptura() {
   fill(textoSecundario);
   textAlign(CENTER, CENTER);
   textSize(19);
-  text("INVENTARIO = con los que abriste · UNIDADES = los que quedaron", 350, 1355);
+  text("INVENTARIO = con los que abriste · UNIDADES = los que quedaron", 350, 1390);
   textAlign(LEFT, CENTER);
 }
 
@@ -255,51 +260,51 @@ function pantallaResultados() {
   // ---------- Totales ----------
   fill(blanco);
   noStroke();
-  rect(30, 165, 640, 290, 26);
+  rect(30, 165, 640, 275, 26);
 
   fill(textoSecundario);
   textSize(19);
-  text("POSTRES VENDIDOS", 65, 210);
+  text("POSTRES VENDIDOS", 65, 208);
 
   fill(texto);
   textSize(42);
-  text(totalPostres + " uds", 65, 263);
+  text(totalPostres + " uds", 65, 258);
 
   fill(textoSecundario);
   textSize(19);
-  text("MÁS VENDIDO", 380, 210);
+  text("MÁS VENDIDO", 380, 208);
 
   fill(texto);
   textSize(24);
-  text(postreMasVendido, 380, 257);
+  text(postreMasVendido, 380, 253);
 
   fill(textoSecundario);
   textSize(18);
-  text(cantidadMayor + " unidades", 380, 290);
+  text(cantidadMayor + " unidades", 380, 285);
 
   stroke(borde);
   strokeWeight(2);
-  line(65, 330, 635, 330);
+  line(65, 318, 635, 318);
   noStroke();
 
   fill(textoSecundario);
   textSize(19);
-  text("VENTA TOTAL DEL DÍA", 65, 368);
+  text("VENTA TOTAL DEL DÍA", 65, 354);
 
   fill(verde);
   textSize(42);
-  text("$" + formato(ventaTotal), 65, 420);
+  text("$" + formato(ventaTotal), 65, 404);
 
   // ---------- Vendidos por postre ----------
   fill(blanco);
-  rect(30, 480, 640, 420, 26);
+  rect(30, 462, 640, 390, 26);
 
   fill(texto);
   textSize(28);
-  text("Vendidos por postre", 65, 525);
+  text("Vendidos por postre", 65, 505);
 
   for (let i = 0; i < N; i++) {
-    let y = 580 + i * 45;
+    let y = 557 + i * 42;
 
     fill(textoSecundario);
     textSize(21);
@@ -315,42 +320,54 @@ function pantallaResultados() {
 
   // ---------- Desglose de gastos ----------
   fill(blanco);
-  rect(30, 925, 640, 400, 26);
+  rect(30, 874, 640, 355, 26);
 
   fill(texto);
   textSize(28);
-  text("Desglose de Gastos", 65, 970);
+  text("Desglose de Gastos", 65, 917);
 
-  fila("Costo de los postres vendidos", "$" + formato(costoProduccion), 1025);
-  fila("Renta",  "$" + formato(RENTA),  1075);
-  fila("Luz",    "$" + formato(LUZ),    1125);
-  fila("Gas",    "$" + formato(GAS),    1175);
-  fila("Ahorro", "$" + formato(AHORRO), 1225);
+  fila("Costo de los postres vendidos", "$" + formato(costoProduccion), 968);
+  fila("Renta", "$" + formato(RENTA), 1011);
+  fila("Luz",   "$" + formato(LUZ),   1054);
+  fila("Gas",   "$" + formato(GAS),   1097);
+  fila("Empleado (18% de la venta)", "$" + formato(comisionEmpleado), 1140);
 
   stroke(borde);
   strokeWeight(2);
-  line(65, 1258, 635, 1258);
+  line(65, 1170, 635, 1170);
   noStroke();
 
   fill(texto);
   textSize(22);
   textAlign(LEFT, CENTER);
-  text("Total de gastos", 65, 1292);
+  text("Total de gastos", 65, 1200);
   textSize(26);
   textAlign(RIGHT, CENTER);
-  text("$" + formato(totalGastos), 635, 1292);
+  text("$" + formato(totalGastos), 635, 1200);
   textAlign(LEFT, CENTER);
 
-  // ---------- Profit libre ----------
+  // ---------- Profit libre (pagando al empleado) ----------
   fill(profitLibre < 0 ? rojo : verde);
-  rect(30, 1350, 640, 130, 26);
+  rect(30, 1255, 640, 125, 26);
 
   fill(blanco);
   textSize(20);
-  text("PROFIT LIBRE", 65, 1390);
+  text("PROFIT LIBRE (PAGANDO AL EMPLEADO)", 65, 1295);
 
   textSize(42);
-  text("$" + formato(profitLibre), 65, 1440);
+  text("$" + formato(profitLibre), 65, 1343);
+
+  // ---------- Profit libre si vendiste tu ----------
+  fill(blanco);
+  rect(30, 1395, 640, 125, 26);
+
+  fill(textoSecundario);
+  textSize(20);
+  text("PROFIT LIBRE SI VENDISTE TÚ (SIN EL 18%)", 65, 1435);
+
+  fill(profitSinEmpleado < 0 ? rojo : verde);
+  textSize(42);
+  text("$" + formato(profitSinEmpleado), 65, 1483);
 }
 
 // ---------- Fila etiqueta / valor ----------
@@ -401,7 +418,7 @@ function dibujarTeclado() {
   rect(0, 0, BASE_W, TEC_Y);
 
   fill(blanco);
-  rect(-20, TEC_Y, BASE_W + 40, 780, 30);
+  rect(-20, TEC_Y, BASE_W + 40, 840, 30);
 
   // Que postre y que columna
   fill(texto);
@@ -512,6 +529,7 @@ function calcularResultados() {
   totalPostres = 0;
   ventaTotal = 0;
   costoProduccion = 0;
+  comisionEmpleado = 0;
   cantidadMayor = 0;
   postreMasVendido = "-";
 
@@ -536,8 +554,13 @@ function calcularResultados() {
     }
   }
 
-  totalGastos = costoProduccion + RENTA + LUZ + GAS;
-  profitLibre = ventaTotal - totalGastos;
+  gastosBase = costoProduccion + RENTA + LUZ + GAS;
+
+  comisionEmpleado = ventaTotal * COMISION_EMPLEADO;
+  totalGastos = gastosBase + comisionEmpleado;
+
+  profitLibre       = ventaTotal - totalGastos;   // pagando al empleado
+  profitSinEmpleado = ventaTotal - gastosBase;    // si vendiste tu
 
   pantalla = 2;
   cerrarTeclado();

@@ -347,7 +347,7 @@ function pantallaResultados() {
 
   fill(blanco);
   textSize(20);
-  text("PROFIT LIBRE (YA CON EL AHORRO)", 65, 1390);
+  text("PROFIT LIBRE", 65, 1390);
 
   textSize(42);
   text("$" + formato(profitLibre), 65, 1440);
@@ -536,7 +536,7 @@ function calcularResultados() {
     }
   }
 
-  totalGastos = costoProduccion + RENTA + LUZ + GAS + AHORRO;
+  totalGastos = costoProduccion + RENTA + LUZ + GAS;
   profitLibre = ventaTotal - totalGastos;
 
   pantalla = 2;

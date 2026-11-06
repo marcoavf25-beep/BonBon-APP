@@ -38,7 +38,10 @@
 // ============================================================
 
 const BASE_W = 700;
-const BASE_H = 1560;
+const BASE_H = 1700;
+
+// Todo el contenido baja este tanto para librar la camara del celular
+const OFFSET_Y = 70;
 
 // ---------- COLORES ----------
 let fondo, blanco, texto, textoSecundario, verde, verdeHover, borde, rojo;
@@ -48,9 +51,12 @@ let fondo, blanco, texto, textoSecundario, verde, verdeHover, borde, rojo;
 let pantalla = 0;
 
 // ---------- GASTOS FIJOS DEL DIA ----------
-const RENTA  = 270;
-const LUZ    = 70;
-const GAS    = 14;
+const RENTA = 270;
+const LUZ   = 70;
+const GAS   = 14;
+
+// El ahorro se muestra informativo: NO se resta del profit
+const AHORRO = 150;
 
 // Comision del empleado: 18% de la venta total del dia
 const COMISION_EMPLEADO = 0.18;
@@ -63,10 +69,11 @@ const postres = [
   "Tiramisu",
   "Besito de Nuez",
   "Cheesecake de Fresa",
+  "Cheesecake de Oreo",
   "Pan de Elote"
 ];
-const precios = [55, 80, 65, 80, 60, 85, 60];
-const costos  = [19, 23, 16.5, 23, 19, 28, 17];
+const precios = [55, 80, 65, 80, 60, 85, 85, 60];
+const costos  = [16.5, 25, 18, 23, 19, 28, 29, 17.5];
 const N = postres.length;
 
 // ---------- CAJAS DE CAPTURA ----------
@@ -82,7 +89,7 @@ let costoProduccion = 0;
 let comisionEmpleado = 0;
 let gastosBase = 0;
 let totalGastos = 0;
-let profitLibre = 0;        // con el pago al empleado
+let profitLibre = 0;        // pagando al empleado
 let profitSinEmpleado = 0;  // si vendiste tu
 let postreMasVendido = "-";
 let cantidadMayor = 0;
@@ -91,7 +98,7 @@ let cantidadMayor = 0;
 let botonInicio, botonCalcular, botonAtras;
 let teclas = [];
 let botonSiguiente, botonCerrarTeclado;
-const TEC_Y = 760;
+const TEC_Y = 810;
 
 // ============================================================
 // SETUP
@@ -113,15 +120,15 @@ function setup() {
 
   // Dos cajas por producto
   for (let i = 0; i < N; i++) {
-    let y = 300 + i * 125;
-    cajas.push(new TextBox(360, y, 140, 76, i, "inv"));
-    cajas.push(new TextBox(515, y, 140, 76, i, "uni"));
+    let y = 295 + i * 118;
+    cajas.push(new TextBox(360, y, 140, 78, i, "inv"));
+    cajas.push(new TextBox(515, y, 140, 78, i, "uni"));
   }
 
-  botonInicio = new BigButton(60, 820, 580, 180,
+  botonInicio = new BigButton(60, 850, 580, 180,
     "Conteo Postres", "Inventario, ventas y ganancia del día");
 
-  botonCalcular = new Button(60, 1230, 580, 100, "CALCULAR", 28);
+  botonCalcular = new Button(60, 1310, 580, 100, "CALCULAR", 28);
   botonAtras    = new Button(40, 52, 92, 76, "←", 30);
 
   construirTeclado();
@@ -146,11 +153,16 @@ function updateCanvasSize() {
 function draw() {
   background(fondo);
 
+  push();
+  translate(0, OFFSET_Y);
+
   if (pantalla === 0)      pantallaInicio();
   else if (pantalla === 1) pantallaCaptura();
   else                     pantallaResultados();
 
   if (tecladoAbierto()) dibujarTeclado();
+
+  pop();
 }
 
 // ============================================================
@@ -162,15 +174,15 @@ function pantallaInicio() {
   fill(rojo);
   textAlign(CENTER, CENTER);
   textSize(26);
-  text("BON BON", 350, 590);
+  text("BON BON", 350, 600);
 
   fill(texto);
   textSize(58);
-  text("Control de Ventas", 350, 665);
+  text("Control de Ventas", 350, 675);
 
   fill(textoSecundario);
   textSize(24);
-  text("Cierre del día", 350, 725);
+  text("Cierre del día", 350, 735);
 
   textAlign(LEFT, CENTER);
   botonInicio.display();
@@ -178,7 +190,7 @@ function pantallaInicio() {
   fill(textoSecundario);
   textAlign(CENTER, CENTER);
   textSize(19);
-  text("Precios y costos configurados en el sistema", 350, 1100);
+  text("Precios y costos configurados en el sistema", 350, 1130);
   textAlign(LEFT, CENTER);
 }
 
@@ -201,32 +213,32 @@ function pantallaCaptura() {
 
   fill(blanco);
   noStroke();
-  rect(30, 195, 640, 965, 26);
+  rect(30, 195, 640, 1060, 26);
 
   // Encabezados de columna
   fill(textoSecundario);
   textSize(19);
-  text("POSTRE", 55, 245);
+  text("POSTRE", 55, 243);
   textAlign(CENTER, CENTER);
-  text("INVENTARIO", 430, 245);
-  text("UNIDADES", 585, 245);
+  text("INVENTARIO", 430, 243);
+  text("UNIDADES", 585, 243);
   textAlign(LEFT, CENTER);
 
   stroke(borde);
   strokeWeight(2);
-  line(55, 275, 645, 275);
+  line(55, 272, 645, 272);
   noStroke();
 
   for (let i = 0; i < N; i++) {
-    let y = 300 + i * 125;
+    let y = 295 + i * 118;
 
     fill(texto);
-    textSize(26);
+    textSize(25);
     text(postres[i], 55, y + 26);
 
     fill(textoSecundario);
-    textSize(20);
-    text("$" + formato(precios[i]), 55, y + 58);
+    textSize(19);
+    text("$" + formato(precios[i]), 55, y + 56);
   }
 
   for (const c of cajas) c.display();
@@ -236,7 +248,7 @@ function pantallaCaptura() {
   fill(textoSecundario);
   textAlign(CENTER, CENTER);
   textSize(19);
-  text("INVENTARIO = con los que abriste · UNIDADES = los que quedaron", 350, 1390);
+  text("INVENTARIO = con los que abriste · UNIDADES = los que quedaron", 350, 1500);
   textAlign(LEFT, CENTER);
 }
 
@@ -297,14 +309,14 @@ function pantallaResultados() {
 
   // ---------- Vendidos por postre ----------
   fill(blanco);
-  rect(30, 462, 640, 390, 26);
+  rect(30, 462, 640, 425, 26);
 
   fill(texto);
   textSize(28);
   text("Vendidos por postre", 65, 505);
 
   for (let i = 0; i < N; i++) {
-    let y = 557 + i * 42;
+    let y = 555 + i * 40;
 
     fill(textoSecundario);
     textSize(21);
@@ -320,54 +332,64 @@ function pantallaResultados() {
 
   // ---------- Desglose de gastos ----------
   fill(blanco);
-  rect(30, 874, 640, 355, 26);
+  rect(30, 909, 640, 400, 26);
 
   fill(texto);
   textSize(28);
-  text("Desglose de Gastos", 65, 917);
+  text("Desglose de Gastos", 65, 952);
 
-  fila("Costo de los postres vendidos", "$" + formato(costoProduccion), 968);
-  fila("Renta", "$" + formato(RENTA), 1011);
-  fila("Luz",   "$" + formato(LUZ),   1054);
-  fila("Gas",   "$" + formato(GAS),   1097);
-  fila("Empleado (18% de la venta)", "$" + formato(comisionEmpleado), 1140);
+  fila("Costo de los postres vendidos", "$" + formato(costoProduccion), 1003);
+  fila("Renta", "$" + formato(RENTA), 1046);
+  fila("Luz",   "$" + formato(LUZ),   1089);
+  fila("Gas",   "$" + formato(GAS),   1132);
+  fila("Empleado (18% de la venta)", "$" + formato(comisionEmpleado), 1175);
 
   stroke(borde);
   strokeWeight(2);
-  line(65, 1170, 635, 1170);
+  line(65, 1205, 635, 1205);
   noStroke();
 
   fill(texto);
   textSize(22);
   textAlign(LEFT, CENTER);
-  text("Total de gastos", 65, 1200);
+  text("Total de gastos", 65, 1234);
   textSize(26);
   textAlign(RIGHT, CENTER);
-  text("$" + formato(totalGastos), 635, 1200);
+  text("$" + formato(totalGastos), 635, 1234);
+  textAlign(LEFT, CENTER);
+
+  // Ahorro: informativo, NO se resta del profit
+  fill(textoSecundario);
+  textSize(19);
+  textAlign(LEFT, CENTER);
+  text("Ahorro sugerido (no se resta)", 65, 1278);
+  textSize(22);
+  textAlign(RIGHT, CENTER);
+  text("$" + formato(AHORRO), 635, 1278);
   textAlign(LEFT, CENTER);
 
   // ---------- Profit libre (pagando al empleado) ----------
   fill(profitLibre < 0 ? rojo : verde);
-  rect(30, 1255, 640, 125, 26);
+  rect(30, 1325, 640, 122, 26);
 
   fill(blanco);
   textSize(20);
-  text("PROFIT LIBRE (PAGANDO AL EMPLEADO)", 65, 1295);
+  text("PROFIT LIBRE (PAGANDO AL EMPLEADO)", 65, 1364);
 
   textSize(42);
-  text("$" + formato(profitLibre), 65, 1343);
+  text("$" + formato(profitLibre), 65, 1411);
 
   // ---------- Profit libre si vendiste tu ----------
   fill(blanco);
-  rect(30, 1395, 640, 125, 26);
+  rect(30, 1460, 640, 122, 26);
 
   fill(textoSecundario);
   textSize(20);
-  text("PROFIT LIBRE SI VENDISTE TÚ (SIN EL 18%)", 65, 1435);
+  text("PROFIT LIBRE SI VENDISTE TÚ (SIN EL 18%)", 65, 1499);
 
   fill(profitSinEmpleado < 0 ? rojo : verde);
   textSize(42);
-  text("$" + formato(profitSinEmpleado), 65, 1483);
+  text("$" + formato(profitSinEmpleado), 65, 1546);
 }
 
 // ---------- Fila etiqueta / valor ----------
@@ -391,7 +413,7 @@ function fila(etiqueta, valor, y) {
 function construirTeclado() {
   const labels = [["1","2","3"], ["4","5","6"], ["7","8","9"], ["C","0","<"]];
   const xs = [50, 255, 460];
-  const ys = [1085, 1185, 1285, 1385];
+  const ys = [1135, 1235, 1335, 1435];
   const w = 190, h = 90;
 
   teclas = [];
@@ -401,8 +423,8 @@ function construirTeclado() {
     }
   }
 
-  botonSiguiente     = new Button(50, 968, 600, 92, "SIGUIENTE", 28);
-  botonCerrarTeclado = new Button(550, 788, 100, 86, "×", 34);
+  botonSiguiente     = new Button(50, 1018, 600, 92, "SIGUIENTE", 28);
+  botonCerrarTeclado = new Button(550, 838, 100, 86, "×", 34);
 }
 
 function tecladoAbierto() {
@@ -413,30 +435,31 @@ function dibujarTeclado() {
 
   const caja = cajas[activeBoxIndex];
 
+  // Oscurecer todo lo de arriba (incluye la franja del offset)
   noStroke();
   fill(0, 105);
-  rect(0, 0, BASE_W, TEC_Y);
+  rect(0, -OFFSET_Y, BASE_W, TEC_Y + OFFSET_Y);
 
   fill(blanco);
-  rect(-20, TEC_Y, BASE_W + 40, 840, 30);
+  rect(-20, TEC_Y, BASE_W + 40, 900, 30);
 
   // Que postre y que columna
   fill(texto);
   textAlign(LEFT, CENTER);
   textSize(26);
-  text(postres[caja.producto], 50, 815);
+  text(postres[caja.producto], 50, 865);
 
   fill(verde);
   textSize(20);
-  text(caja.tipo === "inv" ? "Inventario con el que abriste" : "Los que quedaron", 50, 850);
+  text(caja.tipo === "inv" ? "Inventario con el que abriste" : "Los que quedaron", 50, 900);
 
   fill(caja.text === "" ? color('#A5AAA5') : texto);
   textSize(52);
-  text(caja.text === "" ? "0" : caja.text, 50, 915);
+  text(caja.text === "" ? "0" : caja.text, 50, 965);
 
   // Cerrar
   noStroke();
-  fill(botonCerrarTeclado.isOver(mouseX, mouseY) ? '#E6EAE6' : '#F2F4F2');
+  fill(botonCerrarTeclado.isOver(mouseX, mouseY - OFFSET_Y) ? '#E6EAE6' : '#F2F4F2');
   rect(botonCerrarTeclado.x, botonCerrarTeclado.y,
        botonCerrarTeclado.w, botonCerrarTeclado.h, 18);
   fill(textoSecundario);
@@ -452,7 +475,7 @@ function dibujarTeclado() {
 
   for (const t of teclas) {
     noStroke();
-    fill(enRect(mouseX, mouseY, t) ? '#E6EAE6' : '#F2F4F2');
+    fill(enRect(mouseX, mouseY - OFFSET_Y, t) ? '#E6EAE6' : '#F2F4F2');
     rect(t.x, t.y, t.w, t.h, 18);
 
     textAlign(CENTER, CENTER);
@@ -559,6 +582,7 @@ function calcularResultados() {
   comisionEmpleado = ventaTotal * COMISION_EMPLEADO;
   totalGastos = gastosBase + comisionEmpleado;
 
+  // El AHORRO no se resta: queda dentro del profit
   profitLibre       = ventaTotal - totalGastos;   // pagando al empleado
   profitSinEmpleado = ventaTotal - gastosBase;    // si vendiste tu
 
@@ -590,7 +614,11 @@ function touchStarted() {
   return false;
 }
 
-function handlePress(mx, my) {
+function handlePress(mxRaw, myRaw) {
+
+  // Todo el dibujo esta desplazado OFFSET_Y hacia abajo
+  const mx = mxRaw;
+  const my = myRaw - OFFSET_Y;
 
   if (tecladoAbierto()) { pressTeclado(mx, my); return; }
 
@@ -707,7 +735,7 @@ class Button {
   }
 
   display() {
-    let hover = this.isOver(mouseX, mouseY);
+    let hover = this.isOver(mouseX, mouseY - OFFSET_Y);
 
     noStroke();
     fill(0, 20);
@@ -742,7 +770,7 @@ class BigButton {
   }
 
   display() {
-    let hover = this.isOver(mouseX, mouseY);
+    let hover = this.isOver(mouseX, mouseY - OFFSET_Y);
 
     noStroke();
     fill(0, 22);

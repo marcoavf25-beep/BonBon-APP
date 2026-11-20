@@ -54,6 +54,12 @@
   #barra .etq { font-size: 11px; letter-spacing: .4px; opacity: .6; }
   #barra .val { font-size: 21px; font-weight: 700; margin-top: 1px; }
   #barra .com { text-align: right; }
+  #reiniciar {
+    width: 40px; height: 40px; border-radius: 20px; border: 0;
+    background: rgba(255,255,255,.12); color: #fff; font-size: 21px; line-height: 40px;
+    padding: 0; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  #reiniciar:active { background: rgba(255,255,255,.25); }
   #barra .com .val { color: #8FD4A8; }
 
   #sondeo {
@@ -69,6 +75,7 @@
 <div id="barra">
   <div class="caja">
     <div><div class="etq etq-venta">VENDIDO HOY</div><div class="val val-venta">$0.00</div></div>
+    <button id="reiniciar" aria-label="Reiniciar vendido hoy" onclick="abrirPin('reinicio')">↺</button>
     <div class="com"><div class="etq">TU COMISIÓN 18%</div><div class="val val-com">$0.00</div></div>
   </div>
 </div>
@@ -99,12 +106,18 @@ let zonaSegura = { arriba: 0, abajo: 0 };
 let barraTexto = "";
 let cajaPorMostrar = null;      // casilla que hay que dejar a la vista arriba del teclado
 let mantenerOrdenar = false;    // al agregar postres, que ORDENAR no quede escondido
+let aviso = { t: "", hasta: 0 };   // mensaje corto en rojo (por ejemplo "Carlota está agotado")
+let destelloRojo = new Array(9).fill(-9999);
+
+// Azul cielo para Estadisticas; colores de las graficas (revisados para daltonismo y contraste)
+const AZUL = '#3D93CB', AZUL_HOVER = '#55A4D7';
+const GRAF_VENTA = '#2E86C1', GRAF_UTILIDAD = '#3A8F5C', GRAF_REJILLA = '#ECEFEC';
 
 // ---------- COLORES ----------
 let fondo, blanco, texto, textoSecundario, verde, verdeHover, borde, rojo, rojoHover;
 
 // ---------- PANTALLAS ----------
-// 0 = inicio | 1 = captura | 2 = resultados | 3 = punto de venta | 4 = orden final
+// 0 = inicio | 1 = captura | 2 = resultados | 3 = punto de venta | 4 = orden final | 5 = estadisticas
 let pantalla = 0;
 
 // ---------- GASTOS FIJOS DEL DIA ----------
@@ -202,6 +215,7 @@ let origenResumen = 1;      // a donde regresa la flecha: 1 conteo | 3 punto de 
 let subtituloResumen = "Conteo, venta y ganancia";
 
 // ---------- BOTONES ----------
+let botonEst;
 let botonInicio, botonPV, botonCierrePV, botonCalcular, botonAtras, botonBorrar;
 let teclas = [];
 let botonSiguiente, botonCerrarTeclado;
@@ -251,6 +265,9 @@ let ofNueva = { x: 30, y: 1450, w: 640, h: 110 };
 // Se guarda cifrado (SHA-256), no el PIN tal cual
 const PIN_DUENO_HASH = "3b1e53716e25c357d144145ae01cd61d5b32042ea2e94273791e661fb571159f";
 let pinDueno = null;      // null = cerrado | texto mientras se escribe
+let pinModo = "dueno";    // dueno (Conteo) | estad (Estadisticas) | reinicio (Vendido hoy)
+// PIN de registro (el mismo del Sheet) para reiniciar "Vendido hoy"
+const PIN_REGISTRO_HASH = "5615348358de89c7572c2663ccfa4dbcf90d24b37e8aea9d7fbb7da3b272d217";
 let pinError = "";
 let pinTeclas = [];
 const PIN_Y = 690;
@@ -302,11 +319,13 @@ function setup() {
     cajas.push(new TextBox(515, y, 140, 78, i, "uni"));
   }
 
-  botonInicio = new BigButton(50, 430, 600, 180,
+  botonInicio = new BigButton(50, 360, 600, 170,
     "Conteo Postres", "Solo dueño · inventario y ganancia", verde, verdeHover);
-  botonPV = new BigButton(50, 635, 600, 180,
+  botonPV = new BigButton(50, 552, 600, 170,
     "Punto de Venta", "Registra cada orden del día", rojo, rojoHover);
-  botonCierrePV = { x: 50, y: 840, w: 600, h: 130,
+  botonEst = new BigButton(50, 744, 600, 170,
+    "Estadísticas", "Solo dueño · gráficas de lo vendido", color(AZUL), color(AZUL_HOVER));
+  botonCierrePV = { x: 50, y: 936, w: 600, h: 130,
     isOver(mx, my) { return enRect(mx, my, this); } };
 
   botonCalcular = new Button(60, 1310, 580, 100, "CALCULAR", 31);
@@ -326,6 +345,7 @@ function setup() {
   construirTeclado();
   construirTecladoPin();
   cargarPV();
+  cargarEstadisticasGuardadas();
   ajustarLienzo();
   sincronizar(false);
   setInterval(() => { if (pv.pendientes.length) sincronizar(false); }, 45000);
@@ -420,7 +440,8 @@ function draw() {
   else if (pantalla === 1) pantallaCaptura();
   else if (pantalla === 2) pantallaResultados();
   else if (pantalla === 3) pantallaPV();
-  else                     pantallaOrden();
+  else if (pantalla === 4) pantallaOrden();
+  else                     pantallaEstadisticas();
 
   // Las ventanas de abajo se pegan al borde de lo que se ve
   const ov = overlayActual();
@@ -440,7 +461,7 @@ function draw() {
   const ta = ov ? "none" : "pan-y";
   if (lienzo.style.touchAction !== ta) lienzo.style.touchAction = ta;
 
-  actualizarBarra(!ov && pantalla !== 2);
+  actualizarBarra(!ov && pantalla !== 2 && pantalla !== 5);
   ajustarLienzo();
 
   if (cajaPorMostrar) { asegurarVisible(cajaPorMostrar); cajaPorMostrar = null; }
@@ -467,19 +488,20 @@ function pantallaInicio() {
   fill(rojo);
   textAlign(CENTER, CENTER);
   textSize(30);
-  text("BON BON", 350, 220);
+  text("BON BON", 350, 160);
 
   fill(texto);
   textSize(62);
-  text("Control de Ventas", 350, 295);
+  text("Control de Ventas", 350, 232);
 
   fill(textoSecundario);
   textSize(28);
-  text("Cierre del día", 350, 358);
+  text("Cierre del día", 350, 292);
 
   textAlign(LEFT, CENTER);
   botonInicio.display();
   botonPV.display();
+  botonEst.display();
 
   // Cierre con las ventas del Punto de Venta
   const b = botonCierrePV;
@@ -504,10 +526,10 @@ function pantallaInicio() {
   fill(textoSecundario);
   textAlign(CENTER, CENTER);
   textSize(23);
-  text("Precios y costos configurados en el sistema", 350, 1030);
+  text("Precios y costos configurados en el sistema", 350, 1120);
   textAlign(LEFT, CENTER);
 
-  altoContenido = 1070;
+  altoContenido = 1160;
 }
 
 // ============================================================
@@ -944,7 +966,7 @@ function asegurarDia() {
     ? { fecha: pv.fecha, ordenes: pv.ordenes }
     : pv.anterior;
   pv = { fecha: hoy, ordenes: [], siguiente: 1, carrito: [], anterior: anterior || null,
-         pendientes: pv.pendientes || [], stock: pv.stock || {} };
+         pendientes: pv.pendientes || [], stock: pv.stock || {}, corte: 0 };
   guardarPV();
 }
 
@@ -1020,11 +1042,22 @@ function totalItems(items) {
   return t;
 }
 
+// La barra cuenta solo las ordenes despues del ultimo reinicio (pv.corte).
+// El cierre del dia sigue usando TODAS las ordenes del dia.
 function totalesPV() {
   asegurarDia();
-  let venta = 0;
-  for (const o of pv.ordenes) venta += o.total;
-  return { venta: venta, comision: venta * COMISION_EMPLEADO, ordenes: pv.ordenes.length };
+  let venta = 0, n = 0;
+  for (const o of pv.ordenes) {
+    if (o.n > (pv.corte || 0)) { venta += o.total; n++; }
+  }
+  return { venta: venta, comision: venta * COMISION_EMPLEADO, ordenes: n };
+}
+
+function reiniciarVendido() {
+  pv.corte = pv.siguiente - 1;
+  guardarPV();
+  barraTexto = "";
+  avisar("Vendido hoy reiniciado");
 }
 
 function cuentaEnCarrito(i) {
@@ -1081,6 +1114,25 @@ function stockDe(nombre) {
   return typeof v === "number" ? v : null;
 }
 
+// Cuanto de este producto ya va en la orden actual (fresas en porciones)
+function enCarritoInv(nombreInv) {
+  let n = 0;
+  for (const it of pv.carrito) {
+    if (it.prod === "fresas") { if (nombreInv === "Fresas") n += FRESAS[it.tam].porcion; }
+    else if (postres[it.prod] === nombreInv) n++;
+  }
+  return n;
+}
+
+// Lo que todavia se puede vender (null = ese producto no lleva inventario)
+function disponible(nombreInv) {
+  const q = stockDe(nombreInv);
+  if (q === null) return null;
+  return Math.round((q - enCarritoInv(nombreInv)) * 100) / 100;
+}
+
+function avisar(t) { aviso = { t: t, hasta: millis() + 2600 }; }
+
 function moverStockLocal(piezas, signo) {
   for (const nombre in piezas) {
     const k = clave(nombre);
@@ -1134,6 +1186,7 @@ async function sincronizar(interactivo) {
 }
 
 function textoEstadoSync() {
+  if (millis() < aviso.hasta) return { t: aviso.t, c: rojo };
   const n = pv.pendientes.filter(op => op.tipo === "orden").length;
   if (sync.enviando && pv.pendientes.length) return { t: "Actualizando inventario…", c: textoSecundario };
   if (sync.estado === "pin")    return { t: "PIN incorrecto · toca aquí", c: rojo };
@@ -1157,10 +1210,11 @@ function actualizarBarra(visible) {
     return;
   }
   const t = totalesPV();
-  const txt = t.ordenes + "|" + t.venta;
+  const avisoBarra = millis() < aviso.hasta && aviso.t === "Vendido hoy reiniciado";
+  const txt = t.ordenes + "|" + t.venta + "|" + avisoBarra;
   if (txt !== barraTexto) {
     barraTexto = txt;
-    el.querySelector(".etq-venta").textContent =
+    el.querySelector(".etq-venta").textContent = avisoBarra ? "✓ REINICIADO" :
       "VENDIDO HOY · " + t.ordenes + (t.ordenes === 1 ? " ORDEN" : " ÓRDENES");
     el.querySelector(".val-venta").textContent = "$" + formato(t.venta);
     el.querySelector(".val-com").textContent = "$" + formato(t.comision);
@@ -1237,7 +1291,7 @@ function dibujarTile(i) {
   textStyle(NORMAL);
 
   // Precio
-  const q = stockDe(esFresas ? "Fresas" : postres[i]);
+  const q = disponible(esFresas ? "Fresas" : postres[i]);
   fill(esFresas ? color(255, 225) : acc);
   textSize(26);
   if (esFresas && q !== null && q < FRESAS.chicas.porcion) {
@@ -1278,11 +1332,26 @@ function dibujarTile(i) {
     textAlign(LEFT, CENTER);
   }
 
-  // Destello al tocar
+  // Agotado: se ve apagado
+  const agotado = q !== null && q < (esFresas ? FRESAS.chicas.porcion : 1);
+  if (agotado) {
+    fill(245, 246, 244, 150);
+    rect(t.x, t.y, t.w, t.h, 26);
+  }
+
+  // Destello al tocar (rojo si estaba agotado)
   const dt = millis() - destello[i];
   if (dt < 260) {
     fill(255, 150 * (1 - dt / 260));
     rect(t.x, t.y, t.w, t.h, 26);
+  }
+  const dr = millis() - destelloRojo[i];
+  if (dr < 450) {
+    noFill();
+    stroke(rojo);
+    strokeWeight(5);
+    rect(t.x + 2, t.y + 2, t.w - 4, t.h - 4, 24);
+    noStroke();
   }
 }
 
@@ -1387,8 +1456,16 @@ function pressPV(mx, my) {
   for (let i = 0; i <= N; i++) {
     if (enRect(mx, my, tiles[i])) {
       if (i === N) {
+        const d = disponible("Fresas");
+        if (d !== null && d < FRESAS.chicas.porcion) {
+          avisar("Ya no hay fresas en el refri"); destelloRojo[i] = millis(); return;
+        }
         modalFresas = { tam: "chicas", premium: [], clasicos: [] };
       } else {
+        const d = disponible(postres[i]);
+        if (d !== null && d < 1) {
+          avisar(postres[i] + " está agotado"); destelloRojo[i] = millis(); return;
+        }
         pv.carrito.push({ prod: i });
         guardarPV();
         destello[i] = millis();
@@ -1509,20 +1586,22 @@ function dibujarModalFresas() {
   for (const k of ["chicas", "grandes"]) {
     const b = MF_TAM[k];
     const sel = m.tam === k;
-    if (sel) { fill(rojo); noStroke(); }
-    else     { fill('#F7F8F7'); stroke(borde); strokeWeight(2); }
+    const puede = alcanzaFresa(k);
+    if (sel && puede) { fill(rojo); noStroke(); }
+    else if (!puede)  { fill('#F2F2F2'); noStroke(); }
+    else              { fill('#F7F8F7'); stroke(borde); strokeWeight(2); }
     rect(b.x, b.y, b.w, b.h, 20);
     noStroke();
-    fill(sel ? blanco : texto);
+    fill(sel && puede ? blanco : (puede ? texto : color('#B4B9B4')));
     textAlign(CENTER, CENTER);
     textStyle(BOLD);
     textSize(31);
     text(FRESAS[k].corto, b.x + b.w / 2, b.y + 40);
     textStyle(NORMAL);
-    fill(sel ? color(255, 220) : textoSecundario);
+    fill(sel && puede ? color(255, 220) : (puede ? textoSecundario : color('#B4B9B4')));
     textSize(27);
-    // Cuantas alcanzan con el stock de "Fresas" (chicas = 1, grandes = 1.5)
-    const q = stockDe("Fresas");
+    // Cuantas alcanzan con lo que queda de "Fresas" (chicas = 1, grandes = 1.5)
+    const q = disponible("Fresas");
     const alcanzan = q === null ? null : Math.floor(q / FRESAS[k].porcion + 1e-9);
     const extra = alcanzan === null ? "" : (alcanzan <= 0 ? "  ·  agotadas" : "  ·  alcanzan " + alcanzan);
     text("$" + FRESAS[k].precio + extra, b.x + b.w / 2, b.y + 78);
@@ -1559,7 +1638,7 @@ function dibujarModalFresas() {
   const a = MF_AGREGAR;
   fill(0, 22);
   rect(a.x, a.y + 6, a.w, a.h, 24);
-  fill(enRect(mouseX, mouseY - OFFSET_Y, a) ? rojoHover : rojo);
+  fill(alcanzaFresa(m.tam) ? (enRect(mouseX, mouseY - OFFSET_Y - dyOverlay, a) ? rojoHover : rojo) : color('#D9DCD9'));
   rect(a.x, a.y, a.w, a.h, 24);
   fill(blanco);
   textAlign(CENTER, CENTER);
@@ -1608,7 +1687,11 @@ function pressModalFresas(mx, my) {
   if (my < MF_Y || enRect(mx, my, MF_CERRAR)) { modalFresas = null; return; }
 
   for (const k of ["chicas", "grandes"]) {
-    if (enRect(mx, my, MF_TAM[k])) { m.tam = k; return; }
+    if (enRect(mx, my, MF_TAM[k])) {
+      if (alcanzaFresa(k)) m.tam = k;
+      else avisar("No alcanzan fresas para " + FRESAS[k].corto.toLowerCase());
+      return;
+    }
   }
 
   const prem = chipsPremium();
@@ -1621,6 +1704,7 @@ function pressModalFresas(mx, my) {
   }
 
   if (enRect(mx, my, MF_AGREGAR)) {
+    if (!alcanzaFresa(m.tam)) { avisar("Ya no alcanzan fresas"); return; }
     pv.carrito.push({
       prod: "fresas",
       tam: m.tam,
@@ -1632,6 +1716,11 @@ function pressModalFresas(mx, my) {
     modalFresas = null;
     mantenerOrdenar = true;
   }
+}
+
+function alcanzaFresa(tam) {
+  const d = disponible("Fresas");
+  return d === null || d + 1e-9 >= FRESAS[tam].porcion;
 }
 
 function alternarTopping(lista, i, max) {
@@ -1794,6 +1883,469 @@ function pressOrden(mx, my) {
 }
 
 // ============================================================
+// PANTALLA 5 - ESTADISTICAS
+// Datos de la pestaña "Registro App" (un renglon por dia registrado)
+// y de "Órdenes App" (hora de cada orden del Punto de Venta).
+// ============================================================
+
+const EST_KEY = "bonbon_est";
+let est = { cargando: false, error: "", datos: null, actualizado: "", periodo: 7, sel: null };
+let estZonas = { chips: [], dias: [], horas: [] };   // donde se puede tocar
+
+const NOMBRES_EST = postres.concat(["Fresas Chicas", "Fresas Grandes"]);
+
+function cargarEstadisticasGuardadas() {
+  try {
+    const g = JSON.parse(localStorage.getItem(EST_KEY) || "null");
+    if (g && g.datos) { est.datos = g.datos; est.actualizado = g.actualizado || ""; }
+  } catch (e) {}
+}
+
+async function cargarEstadisticas() {
+  if (est.cargando) return;
+  if (!SCRIPT_URL.startsWith("https://")) return;
+
+  let pin = leerPin();
+  if (!pin) {
+    pin = (window.prompt("PIN de registro (solo se pide una vez):") || "").trim();
+    if (!pin) { est.error = "Falta el PIN de registro"; return; }
+    guardarPin(pin);
+  }
+
+  est.cargando = true;
+  est.error = "";
+  try {
+    const r = await fetch(SCRIPT_URL, {
+      method: "POST",
+      body: JSON.stringify({ pin: pin, accion: "estadisticas" })
+    });
+    const j = await r.json();
+    if (j.ok) {
+      est.datos = { dias: j.dias || [], horas: j.horas || [] };
+      est.actualizado = horaTexto(new Date());
+      try { localStorage.setItem(EST_KEY, JSON.stringify({ datos: est.datos, actualizado: est.actualizado })); } catch (e) {}
+    } else if (j.error === "PIN") {
+      borrarPin();
+      est.error = "PIN de registro incorrecto";
+    } else {
+      est.error = "Error en el Sheet";
+    }
+  } catch (e) {
+    est.error = "Sin internet";
+  }
+  est.cargando = false;
+}
+
+// Hora de "1:55 pm", "13:55:00" o "1:55:00 p.m." -> 13
+function horaDe(t) {
+  const m = String(t).match(/(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  let h = Number(m[1]);
+  if (/p\.?\s?m/i.test(t) && h < 12) h += 12;
+  if (/a\.?\s?m/i.test(t) && h === 12) h = 0;
+  return h;
+}
+
+function miles(n) {
+  return Math.round(n).toLocaleString("en-US");
+}
+
+function dineroCorto(n) {
+  if (n >= 1000) return "$" + (Math.round(n / 100) / 10) + "k";
+  return "$" + Math.round(n);
+}
+
+// Junta los numeros del periodo elegido
+function resumenEst() {
+  const d = est.datos;
+  if (!d) return null;
+
+  let desde = null;
+  if (est.periodo > 0) {
+    desde = fechaPorDefecto();
+    desde.setDate(desde.getDate() - (est.periodo - 1));
+    desde.setHours(0, 0, 0, 0);
+  }
+  const dentro = f => !desde || fechaDesdeIso(f) >= desde;
+
+  const dias = d.dias.filter(x => dentro(x.f)).sort((a, b) => a.f < b.f ? -1 : 1);
+  const r = { dias: dias, venta: 0, utilidad: 0, postres: 0, mejor: null,
+              porPostre: new Array(NOMBRES_EST.length).fill(0), horas: {} };
+
+  for (const x of dias) {
+    r.venta += x.v; r.utilidad += x.u; r.postres += x.p;
+    if (!r.mejor || x.v > r.mejor.v) r.mejor = x;
+    (x.c || []).forEach((n, i) => { r.porPostre[i] += n; });
+    r.porPostre[N]     += x.fc || 0;
+    r.porPostre[N + 1] += x.fg || 0;
+  }
+
+  for (const o of d.horas) {
+    if (!dentro(o.f)) continue;
+    const h = horaDe(o.h);
+    if (h === null) continue;
+    if (!r.horas[h]) r.horas[h] = { n: 0, t: 0 };
+    r.horas[h].n++;
+    r.horas[h].t += o.t;
+  }
+
+  // Muchos dias: se agrupan por semana para que las barras no queden delgaditas
+  r.barras = dias.map(x => ({ etq: String(fechaDesdeIso(x.f).getDate()),
+                              titulo: textoFecha(fechaDesdeIso(x.f)), v: x.v, u: x.u }));
+  if (r.barras.length > 31) {
+    const semanas = [];
+    for (let k = 0; k < dias.length; k += 7) {
+      const grupo = dias.slice(k, k + 7);
+      const f0 = fechaDesdeIso(grupo[0].f);
+      semanas.push({ etq: f0.getDate() + "/" + (f0.getMonth() + 1),
+                     titulo: "Semana del " + textoFecha(f0),
+                     v: grupo.reduce((a, b) => a + b.v, 0), u: grupo.reduce((a, b) => a + b.u, 0) });
+    }
+    r.barras = semanas;
+    r.semanal = true;
+  }
+  return r;
+}
+
+function pantallaEstadisticas() {
+
+  botonAtras.display();
+
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textSize(46);
+  text("Estadísticas", 158, 80);
+
+  let sub = "Toca una barra para ver el detalle", colSub = textoSecundario;
+  if (est.cargando)   sub = "Actualizando…";
+  else if (est.error) { sub = est.error + (est.datos ? " · datos guardados" : ""); colSub = rojo; }
+  else if (est.actualizado) sub = "Actualizado " + est.actualizado + " · toca una barra";
+  fill(colSub);
+  textSize(24);
+  text(sub, 160, 128);
+
+  // ---------- Periodo ----------
+  const opciones = [[7, "7 días"], [30, "30 días"], [0, "Todo"]];
+  estZonas.chips = [];
+  opciones.forEach(([val, etq], k) => {
+    const b = { x: 30 + k * 220, y: 162, w: 200, h: 66, val: val };
+    estZonas.chips.push(b);
+    const sel = est.periodo === val;
+    noStroke();
+    if (sel) fill(AZUL); else { fill(blanco); stroke(borde); strokeWeight(2); }
+    rect(b.x, b.y, b.w, b.h, 33);
+    noStroke();
+    fill(sel ? blanco : texto);
+    textAlign(CENTER, CENTER);
+    textSize(26);
+    text(etq, b.x + b.w / 2, b.y + b.h / 2);
+  });
+  textAlign(LEFT, CENTER);
+
+  const r = resumenEst();
+  if (!r || r.dias.length === 0) {
+    fill(blanco);
+    rect(30, 252, 640, 220, 26);
+    fill(textoSecundario);
+    textAlign(CENTER, CENTER);
+    textSize(26);
+    text(est.cargando ? "Cargando…" : "Aún no hay días registrados en este periodo.", 350, 335);
+    textSize(23);
+    text("Se llena cada vez que tocas REGISTRAR al cerrar el día.", 350, 385);
+    textAlign(LEFT, CENTER);
+    estZonas.dias = []; estZonas.horas = [];
+    altoContenido = 500;
+    return;
+  }
+
+  // ---------- Numeros grandes ----------
+  const nd = r.dias.length;
+  tarjetaDato(30, 252, "VENTA TOTAL", "$" + miles(r.venta), nd + (nd === 1 ? " día registrado" : " días registrados"));
+  tarjetaDato(360, 252, "UTILIDAD", "$" + miles(r.utilidad),
+              r.venta > 0 ? Math.round(r.utilidad / r.venta * 100) + "% de la venta" : "");
+  tarjetaDato(30, 420, "POSTRES VENDIDOS", miles(r.postres), "≈ " + Math.round(r.postres / nd) + " por día");
+  tarjetaDato(360, 420, "PROMEDIO POR DÍA", "$" + miles(r.venta / nd),
+              r.mejor ? "Mejor: " + DIAS[fechaDesdeIso(r.mejor.f).getDay()] + " " +
+                        fechaDesdeIso(r.mejor.f).getDate() + " · $" + miles(r.mejor.v) : "");
+
+  let y = 590;
+  y = graficaVentas(r, y) + 22;
+  y = graficaPostres(r, y) + 22;
+  y = graficaHoras(r, y) + 22;
+
+  altoContenido = y + 10;
+}
+
+function tarjetaDato(x, y, etq, valor, sub) {
+  noStroke();
+  fill(blanco);
+  rect(x, y, 310, 150, 24);
+  fill(textoSecundario);
+  textAlign(LEFT, CENTER);
+  textSize(20);
+  text(etq, x + 26, y + 36);
+  fill(texto);
+  textStyle(BOLD);
+  textSize(40);
+  text(valor, x + 26, y + 84);
+  textStyle(NORMAL);
+  fill(textoSecundario);
+  textSize(20);
+  text(recortar(sub, 270), x + 26, y + 124);
+}
+
+function leyenda(items, xDer, y) {
+  textSize(21);
+  let x = xDer;
+  for (let k = items.length - 1; k >= 0; k--) {
+    const [col, etq] = items[k];
+    const w = textWidth(etq);
+    x -= w;
+    fill(textoSecundario);
+    textAlign(LEFT, CENTER);
+    text(etq, x, y);
+    fill(col);
+    rect(x - 26, y - 8, 16, 16, 4);
+    x -= 50;
+  }
+}
+
+function lineasRejilla(x0, x1, yBase, alto, max, pasos) {
+  textSize(19);
+  for (let k = 0; k <= pasos; k++) {
+    const yy = yBase - alto * k / pasos;
+    stroke(GRAF_REJILLA);
+    strokeWeight(k === 0 ? 2 : 1.5);
+    line(x0, yy, x1, yy);
+    noStroke();
+    fill(color('#9AA09A'));
+    textAlign(RIGHT, CENTER);
+    text(dineroCorto(max * k / pasos), x0 - 10, yy);
+  }
+  textAlign(LEFT, CENTER);
+}
+
+// Escala "bonita" para el eje (1, 2, 2.5 o 5 x 10^n) con marcas en numeros redondos
+function tope(max) {
+  if (max <= 0) return { max: 1, pasos: 5 };
+  const p = Math.pow(10, Math.floor(Math.log10(max)));
+  for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= max) return { max: m * p, pasos: m === 2 ? 4 : 5 };
+  return { max: 10 * p, pasos: 5 };
+}
+
+// Barra con la punta de arriba redondeada y la base recta
+function barraVertical(x, yBase, w, h, col) {
+  if (h <= 0) return;
+  fill(col);
+  const r = Math.min(4, w / 2, h);
+  rect(x, yBase - h, w, h, r, r, 0, 0);
+}
+
+function graficaVentas(r, y) {
+  const alto = 470;
+  noStroke();
+  fill(blanco);
+  rect(30, y, 640, alto, 26);
+
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textSize(30);
+  text(r.semanal ? "Ventas por semana" : "Ventas por día", 60, y + 44);
+  leyenda([[GRAF_VENTA, "Venta"], [GRAF_UTILIDAD, "Utilidad"]], 640, y + 46);
+
+  const x0 = 120, x1 = 640, yBase = y + alto - 70, altoG = 290;
+  const escalaY = tope(Math.max(...r.barras.map(b => b.v), 1));
+  const max = escalaY.max;
+  lineasRejilla(x0, x1, yBase, altoG, max, escalaY.pasos);
+
+  const n = r.barras.length;
+  const paso = (x1 - x0) / n;
+  const wBar = Math.max(3, Math.min(34, (paso - 10) / 2));
+  estZonas.dias = [];
+  // Si hay muchas barras, solo algunas etiquetas abajo
+  const cadaCuanto = Math.ceil(n / 10);
+
+  r.barras.forEach((b, k) => {
+    const cx = x0 + paso * (k + 0.5);
+    const hv = altoG * b.v / max, hu = altoG * Math.max(0, b.u) / max;
+    barraVertical(cx - wBar - 1, yBase, wBar, hv, GRAF_VENTA);
+    barraVertical(cx + 1, yBase, wBar, hu, GRAF_UTILIDAD);
+    estZonas.dias.push({ x: x0 + paso * k, y: y + 80, w: paso, h: alto - 80, k: k });
+
+    if (k % cadaCuanto === 0 || k === n - 1) {
+      fill(textoSecundario);
+      textAlign(CENTER, CENTER);
+      textSize(20);
+      text(b.etq, cx, yBase + 28);
+    }
+  });
+  textAlign(LEFT, CENTER);
+
+  // Detalle al tocar una barra
+  if (est.sel && est.sel.g === "dias" && r.barras[est.sel.k]) {
+    const b = r.barras[est.sel.k];
+    const cx = x0 + paso * (est.sel.k + 0.5);
+    noFill();
+    stroke(color('#C9CEC9'));
+    strokeWeight(2);
+    line(cx, y + 90, cx, yBase);
+    noStroke();
+    globo(cx, y + 92, [b.titulo, "Venta $" + miles(b.v), "Utilidad $" + miles(b.u)]);
+  }
+  return y + alto;
+}
+
+function graficaPostres(r, y) {
+  const filas = NOMBRES_EST.map((nm, i) => ({ nm: nm, n: r.porPostre[i], i: i }))
+                           .sort((a, b) => b.n - a.n);
+  const altoFila = 48;
+  const alto = 100 + filas.length * altoFila;
+  noStroke();
+  fill(blanco);
+  rect(30, y, 640, alto, 26);
+
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textSize(30);
+  text("Postres más vendidos", 60, y + 44);
+
+  const max = Math.max(...filas.map(f => f.n), 1);
+  const xb = 330, wMax = 250;
+  filas.forEach((f, k) => {
+    const yy = y + 100 + k * altoFila;
+    fill(f.n > 0 ? texto : color('#B4B9B4'));
+    textAlign(LEFT, CENTER);
+    textSize(23);
+    text(f.nm, 60, yy);
+    // Carril y barra (un solo color: es una sola serie)
+    fill('#F1F3F1');
+    rect(xb, yy - 11, wMax, 22, 4);
+    if (f.n > 0) {
+      fill(GRAF_VENTA);
+      rect(xb, yy - 11, Math.max(6, wMax * f.n / max), 22, 4);
+    }
+    fill(f.n > 0 ? texto : color('#B4B9B4'));
+    textAlign(RIGHT, CENTER);
+    textSize(23);
+    text(f.n, 640, yy);
+  });
+  textAlign(LEFT, CENTER);
+  return y + alto;
+}
+
+function graficaHoras(r, y) {
+  const hs = Object.keys(r.horas).map(Number).sort((a, b) => a - b);
+  const alto = hs.length ? 430 : 170;
+  noStroke();
+  fill(blanco);
+  rect(30, y, 640, alto, 26);
+
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textSize(30);
+  text("Órdenes por hora", 60, y + 44);
+  fill(textoSecundario);
+  textSize(21);
+  text("Solo las del Punto de Venta", 60, y + 82);
+
+  estZonas.horas = [];
+  if (!hs.length) {
+    textSize(23);
+    text("Todavía no hay órdenes en este periodo.", 60, y + 125);
+    return y + alto;
+  }
+
+  const hMin = Math.min(...hs), hMax = Math.max(...hs);
+  const n = hMax - hMin + 1;
+  const x0 = 100, x1 = 640, yBase = y + alto - 60, altoG = 230;
+  const max = Math.max(...hs.map(h => r.horas[h].n), 1);
+  const topeN = Math.max(2, Math.ceil(max / 2) * 2);
+
+  textSize(19);
+  for (let k = 0; k <= 2; k++) {
+    const yy = yBase - altoG * k / 2;
+    stroke(GRAF_REJILLA);
+    strokeWeight(k === 0 ? 2 : 1.5);
+    line(x0, yy, x1, yy);
+    noStroke();
+    fill(color('#9AA09A'));
+    textAlign(RIGHT, CENTER);
+    text(Math.round(topeN * k / 2), x0 - 10, yy);
+  }
+
+  const paso = (x1 - x0) / n;
+  const wBar = Math.max(4, Math.min(40, paso - 10));
+  for (let k = 0; k < n; k++) {
+    const h = hMin + k;
+    const d = r.horas[h] || { n: 0, t: 0 };
+    const cx = x0 + paso * (k + 0.5);
+    barraVertical(cx - wBar / 2, yBase, wBar, altoG * d.n / topeN, GRAF_VENTA);
+    estZonas.horas.push({ x: x0 + paso * k, y: y + 100, w: paso, h: alto - 100, k: k, hora: h });
+    if (n <= 12 || k % 2 === 0) {
+      fill(textoSecundario);
+      textAlign(CENTER, CENTER);
+      textSize(19);
+      const h12 = h % 12 === 0 ? 12 : h % 12;
+      text(h12 + (h < 12 ? "am" : "pm"), cx, yBase + 26);
+    }
+  }
+  textAlign(LEFT, CENTER);
+
+  if (est.sel && est.sel.g === "horas") {
+    const z = estZonas.horas[est.sel.k];
+    if (z) {
+      const d = r.horas[z.hora] || { n: 0, t: 0 };
+      const h12 = z.hora % 12 === 0 ? 12 : z.hora % 12;
+      const cx = z.x + z.w / 2;
+      globo(cx, y + 100, ["De " + h12 + " a " + h12 + ":59 " + (z.hora < 12 ? "am" : "pm"),
+                          d.n + (d.n === 1 ? " orden" : " órdenes") + " · $" + miles(d.t)]);
+    }
+  }
+  return y + alto;
+}
+
+// Cuadrito de detalle (se acomoda para no salirse de la tarjeta)
+function globo(cx, y, lineas) {
+  textSize(22);
+  const w = Math.max(...lineas.map(l => textWidth(l))) + 36;
+  const h = lineas.length * 32 + 20;
+  const x = Math.min(Math.max(cx - w / 2, 40), 660 - w);
+  noStroke();
+  fill(0, 25);
+  rect(x, y + 4, w, h, 14);
+  fill('#252925');
+  rect(x, y, w, h, 14);
+  textAlign(LEFT, CENTER);
+  lineas.forEach((l, k) => {
+    fill(k === 0 ? color(255, 170) : blanco);
+    text(l, x + 18, y + 26 + k * 32);
+  });
+}
+
+function pressEstadisticas(mx, my) {
+  if (botonAtras.isOver(mx, my)) { irAInicio(); return; }
+  if (enRect(mx, my, { x: 150, y: 105, w: 520, h: 46 })) { cargarEstadisticas(); return; }
+
+  for (const c of estZonas.chips) {
+    if (enRect(mx, my, c)) { est.periodo = c.val; est.sel = null; return; }
+  }
+  for (const z of estZonas.dias) {
+    if (enRect(mx, my, z)) {
+      est.sel = (est.sel && est.sel.g === "dias" && est.sel.k === z.k) ? null : { g: "dias", k: z.k };
+      return;
+    }
+  }
+  for (const z of estZonas.horas) {
+    if (enRect(mx, my, z)) {
+      est.sel = (est.sel && est.sel.g === "horas" && est.sel.k === z.k) ? null : { g: "horas", k: z.k };
+      return;
+    }
+  }
+  est.sel = null;
+}
+
+
+// ============================================================
 // PIN DE DUEÑO (se pide cada vez que se entra a Conteo Postres)
 // ============================================================
 
@@ -1807,7 +2359,10 @@ function construirTecladoPin() {
       pinTeclas.push({ label: labels[r][c], x: xs[c], y: ys[r], w: 190, h: 82 });
 }
 
-function abrirPinDueno() {
+function abrirPinDueno() { abrirPin("dueno"); }
+
+function abrirPin(modo) {
+  pinModo = modo;
   pinDueno = "";
   pinError = "";
 }
@@ -1827,12 +2382,15 @@ async function verificarPinDueno() {
   if (pinDueno === null || pinDueno === "") return;
   const intento = pinDueno;
   let ok = false;
-  try { ok = (await sha256Hex("bonbon:" + intento)) === PIN_DUENO_HASH; }
+  const esperado = pinModo === "reinicio" ? PIN_REGISTRO_HASH : PIN_DUENO_HASH;
+  try { ok = (await sha256Hex("bonbon:" + intento)) === esperado; }
   catch (e) { pinError = "No se pudo revisar el PIN"; return; }
   if (pinDueno === null) return;              // se cerro mientras revisaba
   if (ok) {
     pinDueno = null;
-    irACaptura();
+    if (pinModo === "dueno")      irACaptura();
+    else if (pinModo === "estad") irAEstadisticas();
+    else                          reiniciarVendido();
   } else {
     pinDueno = "";
     pinError = "PIN incorrecto";
@@ -1850,11 +2408,12 @@ function dibujarPinDueno() {
   textAlign(CENTER, CENTER);
   textStyle(BOLD);
   textSize(34);
-  text("PIN de dueño", 350, PIN_Y + 65);
+  text(pinModo === "reinicio" ? "Reiniciar vendido hoy" : "PIN de dueño", 350, PIN_Y + 65);
   textStyle(NORMAL);
   fill(textoSecundario);
   textSize(25);
-  text("Para entrar a Conteo Postres", 350, PIN_Y + 105);
+  text(pinModo === "reinicio" ? "Escribe el PIN de registro para confirmar"
+       : pinModo === "estad" ? "Para ver Estadísticas" : "Para entrar a Conteo Postres", 350, PIN_Y + 105);
 
   // Puntitos
   const n = pinDueno.length;
@@ -2156,6 +2715,7 @@ function cerrarTeclado() {
 }
 
 function irAInicio()  { pantalla = 0; cerrarTeclado(); modalFresas = null; pinDueno = null; }
+function irAEstadisticas() { pantalla = 5; est.sel = null; cargarEstadisticas(); }
 function irACaptura() { pantalla = 1; cerrarTeclado(); confirmarBorrar = SIN_CONFIRMAR; }
 function irAPV()      {
   asegurarDia(); pantalla = 3; modalFresas = null; confirmarVaciar = SIN_CONFIRMAR;
@@ -2183,6 +2743,7 @@ function handlePress(mxRaw, myRaw) {
 
     if (botonInicio.isOver(mx, my))          abrirPinDueno();
     else if (botonPV.isOver(mx, my))         irAPV();
+    else if (botonEst.isOver(mx, my))        abrirPin("estad");
     else if (botonCierrePV.isOver(mx, my))   calcularDesdePV();
 
   } else if (pantalla === 1) {
@@ -2209,9 +2770,13 @@ function handlePress(mxRaw, myRaw) {
     if (modalFresas) pressModalFresas(mx, my);
     else             pressPV(mx, my);
 
-  } else {
+  } else if (pantalla === 4) {
 
     pressOrden(mx, my);
+
+  } else {
+
+    pressEstadisticas(mx, my);
   }
 }
 

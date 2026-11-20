@@ -16,20 +16,62 @@
   html, body {
     margin: 0; padding: 0;
     background: #F5F6F4;
-    height: 100%;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    touch-action: none;
     -webkit-user-select: none;
     user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-text-size-adjust: 100%;
   }
-  #sketch-holder { line-height: 0; }
+  body {
+    /* La app empieza debajo de la hora y la camara */
+    padding-top: env(safe-area-inset-top);
+    overscroll-behavior-y: none;
+  }
+  #sketch-holder { line-height: 0; display: flex; justify-content: center; }
+  #sketch-holder canvas { display: block; touch-action: pan-y; -webkit-tap-highlight-color: transparent; }
+
+  /* Tapa la zona de la hora cuando la pantalla se desliza */
+  #tapa {
+    position: fixed; top: 0; left: 0; right: 0;
+    height: env(safe-area-inset-top);
+    background: #F5F6F4; z-index: 5;
+  }
+
+  /* Barra de comision: siempre visible abajo */
+  #barra {
+    display: none;
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 6;
+    padding: 6px 12px calc(6px + env(safe-area-inset-bottom));
+    background: linear-gradient(rgba(245,246,244,0), #F5F6F4 30%);
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  }
+  #barra .caja {
+    max-width: 532px; margin: 0 auto;
+    background: #252925; color: #fff;
+    border-radius: 16px; padding: 7px 16px;
+    display: flex; justify-content: space-between; align-items: center;
+    box-shadow: 0 3px 10px rgba(0,0,0,.12);
+  }
+  #barra .etq { font-size: 11px; letter-spacing: .4px; opacity: .6; }
+  #barra .val { font-size: 21px; font-weight: 700; margin-top: 1px; }
+  #barra .com { text-align: right; }
+  #barra .com .val { color: #8FD4A8; }
+
+  #sondeo {
+    position: fixed; top: 0; left: 0; width: 0; height: 0; visibility: hidden;
+    padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom);
+  }
 </style>
 </head>
 <body>
+<div id="tapa"></div>
+<div id="sondeo"></div>
 <div id="sketch-holder"></div>
+<div id="barra">
+  <div class="caja">
+    <div><div class="etq etq-venta">VENDIDO HOY</div><div class="val val-venta">$0.00</div></div>
+    <div class="com"><div class="etq">TU COMISIÓN 18%</div><div class="val val-com">$0.00</div></div>
+  </div>
+</div>
 
 <script>
 // ============================================================
@@ -39,10 +81,24 @@
 // ============================================================
 
 const BASE_W = 700;
-const BASE_H = 1840;
+const BASE_H = 1840;   // alto inicial; despues el lienzo mide lo que necesite cada pantalla
 
-// Todo el contenido baja este tanto para librar la camara del celular
-const OFFSET_Y = 70;
+// Margen de arriba (la zona de la hora y la camara ya la libra el CSS)
+const OFFSET_Y = 24;
+
+// ---------- TAMAÑO EN PANTALLA ----------
+// La app ocupa todo el ancho del celular; si una pantalla no cabe, se desliza con el dedo.
+let escala = 1;             // pixeles de pantalla por cada unidad del diseño
+let altoLienzo = BASE_H;
+let altoContenido = 1200;   // cada pantalla dice cuanto mide
+let barraAlto = 0;          // alto de la barra de comision (en unidades del diseño)
+let dyOverlay = 0;          // cuanto se recorren las ventanas de abajo para quedar a la vista
+let lienzo = null;
+let pantallaPrevia = -1;
+let zonaSegura = { arriba: 0, abajo: 0 };
+let barraTexto = "";
+let cajaPorMostrar = null;      // casilla que hay que dejar a la vista arriba del teclado
+let mantenerOrdenar = false;    // al agregar postres, que ORDENAR no quede escondido
 
 // ---------- COLORES ----------
 let fondo, blanco, texto, textoSecundario, verde, verdeHover, borde, rojo, rojoHover;
@@ -80,8 +136,9 @@ const N = postres.length;
 
 // ---------- FRESAS CON CREMA (solo en Punto de Venta) ----------
 const FRESAS = {
-  chicas:  { nombre: "Fresas Chicas",  corto: "Chicas",  precio: 70,  costo: 32.33 },
-  grandes: { nombre: "Fresas Grandes", corto: "Grandes", precio: 100, costo: 48.37 }
+  // porcion = cuanto se resta de "Fresas" en el inventario (chicas 100 g = 1, grandes 150 g = 1.5)
+  chicas:  { nombre: "Fresas Chicas",  corto: "Chicas",  precio: 70,  costo: 35.16, porcion: 1 },
+  grandes: { nombre: "Fresas Grandes", corto: "Grandes", precio: 100, costo: 52.74, porcion: 1.5 }
 };
 
 // Toppings (costos de la hoja Recetas)
@@ -171,11 +228,13 @@ let tiles = [];
 let destello = new Array(N + 1).fill(-9999);
 
 // Medidas del Punto de Venta
-const PV_CARRITO_Y = 670, PV_CARRITO_H = 770;
-const PV_LINEA_Y0 = 765, PV_LINEA_H = 74, PV_MAX_LINEAS = 8;
-const PV_ORDENAR = { x: 30, y: 1460, w: 640, h: 110 };
-const PV_VACIAR  = { x: 520, y: 682, w: 130, h: 56 };
-const BARRA_Y = 1600;
+const PV_CARRITO_Y = 724;
+const PV_LINEA_Y0 = PV_CARRITO_Y + 84, PV_LINEA_H = 68;
+let   pvOrdenar = { x: 30, y: 1000, w: 640, h: 112 };
+const PV_VACIAR  = { x: 515, y: PV_CARRITO_Y + 14, w: 135, h: 56 };
+
+// Hasta donde llega el contenido de cada ventana de abajo (para pegarla al borde de la pantalla)
+const TEC_FIN = 1555, MF_FIN = 1455, PIN_FIN = 1525;
 
 // Medidas de la ventana de fresas
 const MF_Y = 520;
@@ -217,7 +276,14 @@ const MESES = ["ene", "feb", "mar", "abr", "may", "jun",
 function setup() {
   let cnv = createCanvas(BASE_W, BASE_H);
   document.getElementById('sketch-holder').appendChild(cnv.elt);
+  lienzo = cnv.elt;
+  leerZonaSegura();
+  medirEscala();
+  // Nitidez suficiente sin gastar bateria de mas
+  pixelDensity(Math.max(1, Math.min(2.5, escala * (window.devicePixelRatio || 1) * 1.1)));
+  frameRate(30);
   smooth();
+  prepararToques();
 
   fondo           = color('#F5F6F4');
   blanco          = color('#FFFFFF');
@@ -236,14 +302,14 @@ function setup() {
     cajas.push(new TextBox(515, y, 140, 78, i, "uni"));
   }
 
-  botonInicio = new BigButton(60, 690, 580, 170,
-    "Conteo Postres", "Solo dueño · inventario, ventas y ganancia", verde, verdeHover);
-  botonPV = new BigButton(60, 885, 580, 170,
+  botonInicio = new BigButton(50, 430, 600, 180,
+    "Conteo Postres", "Solo dueño · inventario y ganancia", verde, verdeHover);
+  botonPV = new BigButton(50, 635, 600, 180,
     "Punto de Venta", "Registra cada orden del día", rojo, rojoHover);
-  botonCierrePV = { x: 60, y: 1080, w: 580, h: 116,
+  botonCierrePV = { x: 50, y: 840, w: 600, h: 130,
     isOver(mx, my) { return enRect(mx, my, this); } };
 
-  botonCalcular = new Button(60, 1310, 580, 100, "CALCULAR", 28);
+  botonCalcular = new Button(60, 1310, 580, 100, "CALCULAR", 31);
   botonAtras    = new Button(40, 52, 92, 76, "←", 30);
   botonBorrar   = { x: 578, y: 52, w: 92, h: 76 };
 
@@ -252,28 +318,89 @@ function setup() {
   botonDiaDespues = new Button(570, 1610, 100, 116, "›", 46);
 
   // Botones de postres: 3 x 3 (el ultimo es Fresas)
-  const xs = [30, 249, 468], ys = [170, 335, 500];
+  const xs = [30, 249, 468], ys = [158, 346, 534];
   for (let i = 0; i <= N; i++) {
-    tiles.push({ x: xs[i % 3], y: ys[Math.floor(i / 3)], w: 202, h: 150 });
+    tiles.push({ x: xs[i % 3], y: ys[Math.floor(i / 3)], w: 202, h: 172 });
   }
 
   construirTeclado();
   construirTecladoPin();
   cargarPV();
+  ajustarLienzo();
   sincronizar(false);
   setInterval(() => { if (pv.pendientes.length) sincronizar(false); }, 45000);
-  updateCanvasSize();
 }
 
-function windowResized() { updateCanvasSize(); }
+function windowResized() { leerZonaSegura(); ajustarLienzo(); }
 
-function updateCanvasSize() {
-  let s = Math.min(windowWidth / BASE_W, windowHeight / BASE_H);
-  let el = document.querySelector('#sketch-holder canvas');
-  if (el) {
-    el.style.width  = (BASE_W * s) + 'px';
-    el.style.height = (BASE_H * s) + 'px';
+// Zona de la hora/camara y de la rayita de abajo del iPhone
+function leerZonaSegura() {
+  const p = document.getElementById('sondeo');
+  if (!p) return;
+  const cs = getComputedStyle(p);
+  zonaSegura = { arriba: parseFloat(cs.paddingTop) || 0, abajo: parseFloat(cs.paddingBottom) || 0 };
+}
+
+function medirEscala() {
+  escala = Math.min(window.innerWidth, 560) / BASE_W;
+}
+
+// El lienzo ocupa todo el ancho; de alto mide lo que necesite la pantalla
+function ajustarLienzo() {
+  medirEscala();
+  const vistaAlto = (window.innerHeight - zonaSegura.arriba - zonaSegura.abajo) / escala;
+  const extra = tecladoAbierto() ? (TEC_FIN - TEC_Y) : 0;   // para poder subir la casilla sobre el teclado
+  const alto = Math.ceil(Math.max(OFFSET_Y + altoContenido + barraAlto + extra, vistaAlto));
+  if (alto !== altoLienzo) { resizeCanvas(BASE_W, alto); altoLienzo = alto; }
+  const w = (BASE_W * escala) + "px", h = (altoLienzo * escala) + "px";
+  if (lienzo.style.width !== w)  lienzo.style.width = w;
+  if (lienzo.style.height !== h) lienzo.style.height = h;
+}
+
+// Borde de abajo de lo que se ve en pantalla (en coordenadas del diseño)
+function finVisible() {
+  const r = lienzo.getBoundingClientRect();
+  return (window.innerHeight - zonaSegura.abajo - r.top) / escala - OFFSET_Y;
+}
+
+// Si una casilla queda tapada por el teclado, se desliza la pantalla para verla
+function asegurarVisible(c) {
+  if (!lienzo) return;
+  const r = lienzo.getBoundingClientRect();
+  const arriba = zonaSegura.arriba + 10;
+  const tecladoArriba = window.innerHeight - zonaSegura.abajo - (TEC_FIN - TEC_Y) * escala;
+  const yArriba = r.top + (c.y + OFFSET_Y) * escala;
+  const yAbajo  = r.top + (c.y + c.h + OFFSET_Y) * escala;
+  if (yArriba < arriba || yAbajo > tecladoArriba - 10) {
+    const centro = arriba + (tecladoArriba - arriba) / 2;
+    window.scrollBy(0, (yArriba + yAbajo) / 2 - centro);
   }
+}
+
+// Toques: un toque corto es "picar"; si el dedo se mueve, es deslizar la pantalla
+function prepararToques() {
+  let toque = null;
+  lienzo.addEventListener("pointerdown", e => {
+    toque = { x: e.clientX, y: e.clientY };
+  });
+  lienzo.addEventListener("pointermove", e => {
+    if (toque && Math.hypot(e.clientX - toque.x, e.clientY - toque.y) > 12) toque = null;
+  });
+  lienzo.addEventListener("pointercancel", () => { toque = null; });
+  lienzo.addEventListener("pointerup", e => {
+    if (!toque) return;
+    toque = null;
+    const r = lienzo.getBoundingClientRect();
+    handlePress((e.clientX - r.left) / escala, (e.clientY - r.top) / escala);
+  });
+}
+
+// Ventana que esta abierta encima (teclado, PIN o fresas)
+function overlayActual() {
+  if (pinDueno !== null)              return { fin: PIN_FIN, dibujar: dibujarPinDueno,    press: pressPinDueno };
+  if (tecladoAbierto())               return { fin: TEC_FIN, dibujar: dibujarTeclado,     press: pressTeclado };
+  if (pantalla === 3 && modalFresas)  return { fin: MF_FIN,  dibujar: dibujarModalFresas, press: pressModalFresas };
+  return null;
 }
 
 // ============================================================
@@ -282,6 +409,9 @@ function updateCanvasSize() {
 
 function draw() {
   background(fondo);
+
+  // Al cambiar de pantalla se regresa arriba
+  if (pantalla !== pantallaPrevia) { pantallaPrevia = pantalla; window.scrollTo(0, 0); }
 
   push();
   translate(0, OFFSET_Y);
@@ -292,11 +422,40 @@ function draw() {
   else if (pantalla === 3) pantallaPV();
   else                     pantallaOrden();
 
-  if (tecladoAbierto()) dibujarTeclado();
-  if (pinDueno !== null) dibujarPinDueno();
-  if (pantalla === 3 && modalFresas) dibujarModalFresas();
+  // Las ventanas de abajo se pegan al borde de lo que se ve
+  const ov = overlayActual();
+  if (ov) {
+    dyOverlay = finVisible() - ov.fin;
+    push();
+    translate(0, dyOverlay);
+    ov.dibujar();
+    pop();
+  } else {
+    dyOverlay = 0;
+  }
 
   pop();
+
+  // Con una ventana abierta no se desliza la pantalla
+  const ta = ov ? "none" : "pan-y";
+  if (lienzo.style.touchAction !== ta) lienzo.style.touchAction = ta;
+
+  actualizarBarra(!ov && pantalla !== 2);
+  ajustarLienzo();
+
+  if (cajaPorMostrar) { asegurarVisible(cajaPorMostrar); cajaPorMostrar = null; }
+  if (mantenerOrdenar) { mostrarOrdenar(); mantenerOrdenar = false; }
+}
+
+// Si el boton ORDENAR quedo abajo de la barra, se desliza un poco la pantalla
+function mostrarOrdenar() {
+  if (pantalla !== 3 || modalFresas) return;
+  const r = lienzo.getBoundingClientRect();
+  const fondoBoton = r.top + (pvOrdenar.y + pvOrdenar.h + OFFSET_Y) * escala;
+  const barra = document.getElementById("barra");
+  const tapa = barra && barra.style.display !== "none" ? barra.offsetHeight : zonaSegura.abajo;
+  const limite = window.innerHeight - tapa - 6;
+  if (fondoBoton > limite) window.scrollBy(0, fondoBoton - limite);
 }
 
 // ============================================================
@@ -307,16 +466,16 @@ function pantallaInicio() {
 
   fill(rojo);
   textAlign(CENTER, CENTER);
-  textSize(26);
-  text("BON BON", 350, 470);
+  textSize(30);
+  text("BON BON", 350, 220);
 
   fill(texto);
-  textSize(58);
-  text("Control de Ventas", 350, 545);
+  textSize(62);
+  text("Control de Ventas", 350, 295);
 
   fill(textoSecundario);
-  textSize(24);
-  text("Cierre del día", 350, 605);
+  textSize(28);
+  text("Cierre del día", 350, 358);
 
   textAlign(LEFT, CENTER);
   botonInicio.display();
@@ -326,28 +485,29 @@ function pantallaInicio() {
   const b = botonCierrePV;
   const t = totalesPV();
   noStroke();
-  fill(b.isOver && enRect(mouseX, mouseY - OFFSET_Y, b) ? '#F0F2F0' : blanco);
-  rect(b.x, b.y, b.w, b.h, 24);
+  fill(0, 14);
+  rect(b.x, b.y + 5, b.w, b.h, 26);
+  fill(blanco);
+  rect(b.x, b.y, b.w, b.h, 26);
   fill(texto);
   textAlign(LEFT, CENTER);
-  textSize(25);
-  text("Cierre con Punto de Venta", b.x + 40, b.y + 40);
+  textSize(31);
+  text("Cierre con Punto de Venta", b.x + 42, b.y + 45);
   fill(textoSecundario);
-  textSize(19);
+  textSize(24);
   text(t.ordenes + (t.ordenes === 1 ? " orden hoy" : " órdenes hoy") +
-       " · ver resumen y registrar", b.x + 40, b.y + 78);
-  fill(textoSecundario);
+       " · resumen y registro", b.x + 42, b.y + 90);
   textAlign(RIGHT, CENTER);
-  textSize(32);
+  textSize(36);
   text("→", b.x + b.w - 40, b.y + b.h / 2);
 
   fill(textoSecundario);
   textAlign(CENTER, CENTER);
-  textSize(19);
-  text("Precios y costos configurados en el sistema", 350, 1260);
+  textSize(23);
+  text("Precios y costos configurados en el sistema", 350, 1030);
   textAlign(LEFT, CENTER);
 
-  dibujarBarraComision();
+  altoContenido = 1070;
 }
 
 // ============================================================
@@ -366,12 +526,12 @@ function pantallaCaptura() {
   const confirmando = millis() - confirmarBorrar < TIEMPO_CONFIRMAR;
   if (confirmando) {
     fill(rojo);
-    textSize(21);
-    text("Toca otra vez la basura para borrar todo", 160, 128);
+    textSize(26);
+    text("Toca otra vez para borrar todo", 160, 128);
   } else {
     fill(textoSecundario);
-    textSize(21);
-    text("Con cuántos abriste y cuántos quedaron", 160, 128);
+    textSize(26);
+    text("Inventario y lo que quedó", 160, 128);
   }
 
   // Boton para borrar todas las casillas
@@ -389,7 +549,7 @@ function pantallaCaptura() {
 
   // Encabezados de columna
   fill(textoSecundario);
-  textSize(19);
+  textSize(24);
   text("POSTRE", 55, 243);
   textAlign(CENTER, CENTER);
   text("INVENTARIO", 430, 243);
@@ -405,11 +565,11 @@ function pantallaCaptura() {
     let y = 295 + i * 118;
 
     fill(texto);
-    textSize(25);
+    textSize(29);
     text(postres[i], 55, y + 26);
 
     fill(textoSecundario);
-    textSize(19);
+    textSize(24);
     text("$" + formato(precios[i]), 55, y + 56);
   }
 
@@ -419,11 +579,13 @@ function pantallaCaptura() {
 
   fill(textoSecundario);
   textAlign(CENTER, CENTER);
-  textSize(19);
-  text("INVENTARIO = con los que abriste · UNIDADES = los que quedaron", 350, 1500);
+  textSize(24);
+  text("INVENTARIO = con los que abriste", 350, 1475);
+  text("UNIDADES = los que quedaron", 350, 1512);
   textAlign(LEFT, CENTER);
 
-  dibujarBarraComision();
+  altoContenido = 1550;
+
 }
 
 function dibujarIconoBasura(cx, cy, col) {
@@ -465,7 +627,7 @@ function pantallaResultados() {
   text("Resumen del Día", 158, 80);
 
   fill(textoSecundario);
-  textSize(21);
+  textSize(26);
   text(subtituloResumen, 160, 128);
 
   // ---------- Totales ----------
@@ -474,7 +636,7 @@ function pantallaResultados() {
   rect(30, 165, 640, 275, 26);
 
   fill(textoSecundario);
-  textSize(19);
+  textSize(24);
   text("POSTRES VENDIDOS", 65, 208);
 
   fill(texto);
@@ -482,15 +644,15 @@ function pantallaResultados() {
   text(totalPostres + " uds", 65, 258);
 
   fill(textoSecundario);
-  textSize(19);
+  textSize(24);
   text("MÁS VENDIDO", 380, 208);
 
   fill(texto);
-  textSize(24);
+  textSize(28);
   text(postreMasVendido, 380, 253);
 
   fill(textoSecundario);
-  textSize(18);
+  textSize(23);
   text(cantidadMayor + " unidades", 380, 285);
 
   stroke(borde);
@@ -499,7 +661,7 @@ function pantallaResultados() {
   noStroke();
 
   fill(textoSecundario);
-  textSize(19);
+  textSize(24);
   text("VENTA TOTAL DEL DÍA", 65, 354);
 
   fill(verde);
@@ -511,19 +673,19 @@ function pantallaResultados() {
   rect(30, 462, 640, 425, 26);
 
   fill(texto);
-  textSize(28);
+  textSize(31);
   text("Vendidos por postre", 65, 505);
 
   for (let i = 0; i <= N; i++) {
     let y = 552 + i * 36;
 
     fill(textoSecundario);
-    textSize(21);
+    textSize(26);
     textAlign(LEFT, CENTER);
     text(NOMBRES_RESUMEN[i], 65, y);
 
     fill(vendidos[i] > 0 ? texto : color('#B4B9B4'));
-    textSize(24);
+    textSize(28);
     textAlign(RIGHT, CENTER);
     text(vendidos[i], 635, y);
   }
@@ -534,7 +696,7 @@ function pantallaResultados() {
   rect(30, 909, 640, 400, 26);
 
   fill(texto);
-  textSize(28);
+  textSize(31);
   text("Desglose de Gastos", 65, 952);
 
   fila("Costo de los postres vendidos", "$" + formato(costoProduccion), 1003);
@@ -549,20 +711,20 @@ function pantallaResultados() {
   noStroke();
 
   fill(texto);
-  textSize(22);
+  textSize(27);
   textAlign(LEFT, CENTER);
   text("Total de gastos", 65, 1234);
-  textSize(26);
+  textSize(30);
   textAlign(RIGHT, CENTER);
   text("$" + formato(totalGastos), 635, 1234);
   textAlign(LEFT, CENTER);
 
   // Ahorro: informativo, NO se resta del profit
   fill(textoSecundario);
-  textSize(19);
+  textSize(24);
   textAlign(LEFT, CENTER);
   text("Ahorro sugerido (no se resta)", 65, 1278);
-  textSize(22);
+  textSize(27);
   textAlign(RIGHT, CENTER);
   text("$" + formato(AHORRO), 635, 1278);
   textAlign(LEFT, CENTER);
@@ -572,7 +734,7 @@ function pantallaResultados() {
   rect(30, 1325, 640, 122, 26);
 
   fill(blanco);
-  textSize(20);
+  textSize(25);
   text("PROFIT LIBRE (PAGANDO AL EMPLEADO)", 65, 1364);
 
   textSize(42);
@@ -583,7 +745,7 @@ function pantallaResultados() {
   rect(30, 1460, 640, 122, 26);
 
   fill(textoSecundario);
-  textSize(20);
+  textSize(25);
   text("PROFIT LIBRE SI VENDISTE TÚ (SIN EL 18%)", 65, 1499);
 
   fill(profitSinEmpleado < 0 ? rojo : verde);
@@ -591,6 +753,7 @@ function pantallaResultados() {
   text("$" + formato(profitSinEmpleado), 65, 1546);
 
   dibujarRegistro();
+  altoContenido = 1755;
 }
 
 // ============================================================
@@ -633,10 +796,10 @@ function dibujarRegistro() {
 
   fill(blanco);
   textAlign(CENTER, CENTER);
-  textSize(30);
+  textSize(33);
   text(titulo, b.x + b.w/2, b.y + b.h/2 - 18);
   fill(255, 210);
-  textSize(19);
+  textSize(24);
   text(subtitulo, b.x + b.w/2, b.y + b.h/2 + 26);
   textAlign(LEFT, CENTER);
 }
@@ -740,12 +903,12 @@ async function registrar() {
 // ---------- Fila etiqueta / valor ----------
 function fila(etiqueta, valor, y) {
   fill(textoSecundario);
-  textSize(21);
+  textSize(26);
   textAlign(LEFT, CENTER);
   text(etiqueta, 65, y);
 
   fill(texto);
-  textSize(26);
+  textSize(30);
   textAlign(RIGHT, CENTER);
   text(valor, 635, y);
   textAlign(LEFT, CENTER);
@@ -890,9 +1053,13 @@ function clave(t) {
 }
 
 // { "Carlota": 2, "Fresas Chicas": 1, ... }
+// Las fresas restan de una sola fila "Fresas": chicas 1, grandes 1.5
 function piezasDe(items) {
   const m = {};
-  for (const it of items) { const k = nombreItem(it); m[k] = (m[k] || 0) + 1; }
+  for (const it of items) {
+    if (it.prod === "fresas") m["Fresas"] = (m["Fresas"] || 0) + FRESAS[it.tam].porcion;
+    else { const k = nombreItem(it); m[k] = (m[k] || 0) + 1; }
+  }
   return m;
 }
 
@@ -917,7 +1084,7 @@ function stockDe(nombre) {
 function moverStockLocal(piezas, signo) {
   for (const nombre in piezas) {
     const k = clave(nombre);
-    if (typeof pv.stock[k] === "number") pv.stock[k] += signo * piezas[nombre];
+    if (typeof pv.stock[k] === "number") pv.stock[k] = Math.round((pv.stock[k] + signo * piezas[nombre]) * 100) / 100;
   }
 }
 
@@ -968,52 +1135,38 @@ async function sincronizar(interactivo) {
 
 function textoEstadoSync() {
   const n = pv.pendientes.filter(op => op.tipo === "orden").length;
-  const cuantas = n === 1 ? "1 orden" : n + " órdenes";
   if (sync.enviando && pv.pendientes.length) return { t: "Actualizando inventario…", c: textoSecundario };
-  if (sync.estado === "pin")    return { t: "PIN incorrecto · toca aquí para escribirlo", c: rojo };
-  if (sync.estado === "sinpin") return { t: "Falta el PIN del inventario · toca aquí", c: rojo };
-  if (pv.pendientes.length && sync.estado === "offline")
-    return { t: "Sin internet · " + cuantas + " por enviar · toca para reintentar", c: rojo };
-  if (pv.pendientes.length && sync.estado === "error")
-    return { t: "Error en el Sheet · toca para reintentar", c: rojo };
-  if (pv.pendientes.length) return { t: cuantas + " por enviar al inventario", c: textoSecundario };
-  return { t: "Toca un postre para agregarlo a la orden", c: textoSecundario };
+  if (sync.estado === "pin")    return { t: "PIN incorrecto · toca aquí", c: rojo };
+  if (sync.estado === "sinpin") return { t: "Falta el PIN · toca aquí", c: rojo };
+  if (pv.pendientes.length && sync.estado === "offline") return { t: "Sin internet · " + n + " por enviar", c: rojo };
+  if (pv.pendientes.length && sync.estado === "error")   return { t: "Error en el Sheet · toca aquí", c: rojo };
+  if (pv.pendientes.length) return { t: n + " por enviar al inventario", c: textoSecundario };
+  return { t: "Toca un postre para agregarlo", c: textoSecundario };
 }
 
 // ============================================================
 // BARRA DE COMISION (visible en inicio, conteo, punto de venta y orden)
 // ============================================================
 
-function dibujarBarraComision() {
+function actualizarBarra(visible) {
+  const el = document.getElementById("barra");
+  if (!el) return;
+  if (!visible) {
+    if (el.style.display !== "none") el.style.display = "none";
+    barraAlto = 0;
+    return;
+  }
   const t = totalesPV();
-  const x = 30, y = BARRA_Y, w = 640, h = 96;
-
-  noStroke();
-  fill(0, 18);
-  rect(x, y + 5, w, h, 24);
-  fill('#252925');
-  rect(x, y, w, h, 24);
-
-  textAlign(LEFT, CENTER);
-  fill(255, 150);
-  textSize(16);
-  text("VENDIDO HOY · " + t.ordenes + (t.ordenes === 1 ? " ORDEN" : " ÓRDENES"), x + 28, y + 30);
-  fill(blanco);
-  textStyle(BOLD);
-  textSize(31);
-  text("$" + formato(t.venta), x + 28, y + 64);
-  textStyle(NORMAL);
-
-  textAlign(RIGHT, CENTER);
-  fill(255, 150);
-  textSize(16);
-  text("TU COMISIÓN 18%", x + w - 28, y + 30);
-  fill('#8FD4A8');
-  textStyle(BOLD);
-  textSize(31);
-  text("$" + formato(t.comision), x + w - 28, y + 64);
-  textStyle(NORMAL);
-  textAlign(LEFT, CENTER);
+  const txt = t.ordenes + "|" + t.venta;
+  if (txt !== barraTexto) {
+    barraTexto = txt;
+    el.querySelector(".etq-venta").textContent =
+      "VENDIDO HOY · " + t.ordenes + (t.ordenes === 1 ? " ORDEN" : " ÓRDENES");
+    el.querySelector(".val-venta").textContent = "$" + formato(t.venta);
+    el.querySelector(".val-com").textContent = "$" + formato(t.comision);
+  }
+  if (el.style.display !== "block") el.style.display = "block";
+  barraAlto = el.offsetHeight / escala;
 }
 
 // ============================================================
@@ -1026,35 +1179,36 @@ function pantallaPV() {
 
   fill(texto);
   textAlign(LEFT, CENTER);
-  textSize(44);
+  textSize(46);
   text("Punto de Venta", 158, 80);
 
   const est = textoEstadoSync();
   fill(est.c);
-  textSize(est.c === rojo ? 19 : 21);
+  textSize(25);
   text(est.t, 160, 128);
 
   for (let i = 0; i <= N; i++) dibujarTile(i);
 
-  dibujarCarrito();
+  const fondoCarrito = dibujarCarrito();
 
-  // Boton ORDENAR
-  const b = PV_ORDENAR;
+  // Boton ORDENAR (siempre debajo de la orden)
+  pvOrdenar = { x: 30, y: fondoCarrito + 18, w: 640, h: 112 };
+  const b = pvOrdenar;
   const total = totalItems(pv.carrito);
   const activo = pv.carrito.length > 0;
   noStroke();
-  if (activo) { fill(0, 22); rect(b.x, b.y + 6, b.w, b.h, 24); }
+  if (activo) { fill(0, 22); rect(b.x, b.y + 6, b.w, b.h, 26); }
   fill(activo ? (enRect(mouseX, mouseY - OFFSET_Y, b) ? rojoHover : rojo) : color('#D9DCD9'));
-  rect(b.x, b.y, b.w, b.h, 24);
+  rect(b.x, b.y, b.w, b.h, 26);
   fill(activo ? blanco : color('#A5AAA5'));
   textAlign(CENTER, CENTER);
   textStyle(BOLD);
-  textSize(32);
+  textSize(36);
   text(activo ? "ORDENAR  ·  $" + formato(total) : "ORDENAR", b.x + b.w / 2, b.y + b.h / 2);
   textStyle(NORMAL);
   textAlign(LEFT, CENTER);
 
-  dibujarBarraComision();
+  altoContenido = b.y + b.h + 30;
 }
 
 function dibujarTile(i) {
@@ -1065,50 +1219,61 @@ function dibujarTile(i) {
 
   noStroke();
   fill(0, 16);
-  rect(t.x, t.y + 5, t.w, t.h, 24);
+  rect(t.x, t.y + 5, t.w, t.h, 26);
   fill(bg);
-  rect(t.x, t.y, t.w, t.h, 24);
+  rect(t.x, t.y, t.w, t.h, 26);
 
   // Rayita de color
   fill(acc);
-  rect(t.x + 20, t.y + 22, 34, 8, 4);
+  rect(t.x + 20, t.y + 22, 38, 9, 5);
 
   // Nombre
   const lineas = esFresas ? ["Fresas", "con Crema"] : NOMBRES_TILE[i];
   textAlign(LEFT, CENTER);
   textStyle(BOLD);
-  textSize(24);
-  const y0 = lineas.length === 1 ? t.y + 70 : t.y + 58;
-  for (let k = 0; k < lineas.length; k++) text(lineas[k], t.x + 20, y0 + k * 29);
+  textSize(29);
+  const y0 = lineas.length === 1 ? t.y + 78 : t.y + 64;
+  for (let k = 0; k < lineas.length; k++) text(lineas[k], t.x + 20, y0 + k * 33);
   textStyle(NORMAL);
 
   // Precio
-  fill(esFresas ? color(255, 220) : acc);
-  textSize(21);
-  text(esFresas ? "desde $70" + FRESAS.chicas.precio : "$" + precios[i], t.x + 20, t.y + t.h - 26);
+  const q = stockDe(esFresas ? "Fresas" : postres[i]);
+  fill(esFresas ? color(255, 225) : acc);
+  textSize(26);
+  if (esFresas && q !== null && q < FRESAS.chicas.porcion) {
+    textStyle(BOLD);
+    text("AGOTADAS", t.x + 20, t.y + t.h - 30);
+    textStyle(NORMAL);
+  } else {
+    text(esFresas ? "desde $" + FRESAS.chicas.precio : "$" + precios[i], t.x + 20, t.y + t.h - 30);
+  }
 
   // Cuantos quedan en el refri (segun la pestaña Inventario)
-  if (!esFresas) {
-    const q = stockDe(postres[i]);
-    if (q !== null) {
-      textAlign(RIGHT, CENTER);
-      textSize(17);
-      if (q <= 0) { fill(rojo); textStyle(BOLD); text("AGOTADO", t.x + t.w - 16, t.y + t.h - 26); textStyle(NORMAL); }
-      else        { fill(q <= 2 ? rojo : acc); text("quedan " + q, t.x + t.w - 16, t.y + t.h - 26); }
-      textAlign(LEFT, CENTER);
+  if (q !== null && !esFresas) {
+    textAlign(RIGHT, CENTER);
+    textSize(21);
+    if (q <= 0) {
+      fill(rojo);
+      textStyle(BOLD);
+      text("AGOTADO", t.x + t.w - 16, t.y + t.h - 30);
+      textStyle(NORMAL);
+    } else {
+      fill(q <= 2 ? rojo : acc);
+      text("quedan " + cantidadTexto(q), t.x + t.w - 16, t.y + t.h - 30);
     }
+    textAlign(LEFT, CENTER);
   }
 
   // Cuantos van en esta orden
   const n = cuentaEnCarrito(i);
   if (n > 0) {
     fill(esFresas ? blanco : acc);
-    ellipse(t.x + t.w - 32, t.y + 32, 44, 44);
+    ellipse(t.x + t.w - 34, t.y + 36, 50, 50);
     fill(esFresas ? rojo : bg);
     textAlign(CENTER, CENTER);
     textStyle(BOLD);
-    textSize(22);
-    text(n, t.x + t.w - 32, t.y + 33);
+    textSize(26);
+    text(n, t.x + t.w - 34, t.y + 37);
     textStyle(NORMAL);
     textAlign(LEFT, CENTER);
   }
@@ -1117,40 +1282,51 @@ function dibujarTile(i) {
   const dt = millis() - destello[i];
   if (dt < 260) {
     fill(255, 150 * (1 - dt / 260));
-    rect(t.x, t.y, t.w, t.h, 24);
+    rect(t.x, t.y, t.w, t.h, 26);
   }
 }
 
-// Lineas visibles del carrito con su posicion
-function lineasCarrito() {
-  const lineas = agruparItems(pv.carrito);
-  const visibles = lineas.slice(0, PV_MAX_LINEAS);
-  visibles.forEach((l, k) => {
-    l.y = PV_LINEA_Y0 + k * PV_LINEA_H;
-    l.menos = { x: 590, y: l.y - 4, w: 60, h: 60 };
-  });
-  return { visibles: visibles, ocultas: lineas.length - visibles.length };
+// 7.5 -> "7.5", 7 -> "7"
+function cantidadTexto(q) {
+  return Number.isInteger(q) ? String(q) : q.toFixed(1);
 }
 
+function lineasCarrito() {
+  const lineas = agruparItems(pv.carrito);
+  lineas.forEach((l, k) => {
+    l.y = PV_LINEA_Y0 + k * PV_LINEA_H;
+    l.menos = { x: 588, y: l.y - 6, w: 66, h: 64 };
+  });
+  return { visibles: lineas, ocultas: 0 };
+}
+
+// Devuelve donde termina la tarjeta
 function dibujarCarrito() {
   const y = PV_CARRITO_Y;
+  const { visibles } = lineasCarrito();
+  const vacio = pv.carrito.length === 0;
+  const alto = vacio ? 150 : 84 + visibles.length * PV_LINEA_H + 6;
+
   noStroke();
   fill(blanco);
-  rect(30, y, 640, PV_CARRITO_H, 26);
+  rect(30, y, 640, alto, 26);
 
   fill(texto);
   textAlign(LEFT, CENTER);
-  textSize(28);
-  text("Orden actual", 60, y + 40);
+  textSize(31);
+  text("Orden actual", 60, y + 42);
 
-  if (pv.carrito.length === 0) {
+  if (vacio) {
     fill(color('#A5AAA5'));
-    textAlign(CENTER, CENTER);
-    textSize(22);
-    text("Toca un postre para empezar", 350, y + PV_CARRITO_H / 2);
-    textAlign(LEFT, CENTER);
-    return;
+    textSize(25);
+    text("Toca un postre para empezar", 60, y + 105);
+    return y + alto;
   }
+
+  const w = textWidth("Orden actual");
+  fill(textoSecundario);
+  textSize(24);
+  text("  ·  " + pv.carrito.length + (pv.carrito.length === 1 ? " postre" : " postres"), 60 + w + 4, y + 43);
 
   // Vaciar (doble toque)
   const v = PV_VACIAR;
@@ -1159,72 +1335,48 @@ function dibujarCarrito() {
   rect(v.x, v.y, v.w, v.h, 16);
   fill(confirmando ? blanco : rojo);
   textAlign(CENTER, CENTER);
-  textSize(19);
+  textSize(23);
   text(confirmando ? "¿Vaciar?" : "Vaciar", v.x + v.w / 2, v.y + v.h / 2);
   textAlign(LEFT, CENTER);
 
   stroke(borde);
   strokeWeight(2);
-  line(60, y + 78, 640, y + 78);
+  line(60, y + 80, 640, y + 80);
   noStroke();
 
-  const { visibles, ocultas } = lineasCarrito();
   for (const l of visibles) {
     const color2 = l.fresas ? rojo : color(COLORES_PV[l.prod][1]);
-
-    // Puntito del color del postre
     fill(color2);
     ellipse(70, l.y + 26, 16, 16);
 
     fill(texto);
-    textSize(24);
+    textSize(28);
     textAlign(LEFT, CENTER);
     const nombre = (l.cant > 1 ? l.cant + " × " : "") + nombreItem(l.item);
     text(nombre, 90, l.y + (l.fresas ? 14 : 26));
 
     if (l.fresas) {
       fill(textoSecundario);
-      textSize(17);
-      text(recortar(resumenToppings(l.item), 380), 90, l.y + 44);
+      textSize(21);
+      text(recortar(resumenToppings(l.item), 360), 90, l.y + 45);
     }
 
     fill(texto);
-    textSize(24);
+    textSize(28);
     textAlign(RIGHT, CENTER);
     text("$" + formato(l.total), 572, l.y + 26);
 
     // Boton quitar
     const m = l.menos;
     fill('#F2F4F2');
-    ellipse(m.x + m.w / 2, m.y + m.h / 2, 50, 50);
+    ellipse(m.x + m.w / 2, m.y + m.h / 2, 54, 54);
     fill(textoSecundario);
     textAlign(CENTER, CENTER);
-    textSize(32);
+    textSize(36);
     text("−", m.x + m.w / 2, m.y + m.h / 2 - 2);
     textAlign(LEFT, CENTER);
   }
-
-  if (ocultas > 0) {
-    fill(textoSecundario);
-    textSize(19);
-    text("+ " + ocultas + " más en la orden", 90, PV_LINEA_Y0 + PV_MAX_LINEAS * PV_LINEA_H - 8);
-  }
-
-  // Total
-  stroke(borde);
-  strokeWeight(2);
-  line(60, y + PV_CARRITO_H - 78, 640, y + PV_CARRITO_H - 78);
-  noStroke();
-  fill(textoSecundario);
-  textSize(20);
-  text(pv.carrito.length + (pv.carrito.length === 1 ? " postre" : " postres"), 60, y + PV_CARRITO_H - 38);
-  fill(texto);
-  textAlign(RIGHT, CENTER);
-  textStyle(BOLD);
-  textSize(32);
-  text("$" + formato(totalItems(pv.carrito)), 640, y + PV_CARRITO_H - 38);
-  textStyle(NORMAL);
-  textAlign(LEFT, CENTER);
+  return y + alto;
 }
 
 function pressPV(mx, my) {
@@ -1240,6 +1392,7 @@ function pressPV(mx, my) {
         pv.carrito.push({ prod: i });
         guardarPV();
         destello[i] = millis();
+        mantenerOrdenar = true;
       }
       confirmarVaciar = SIN_CONFIRMAR;
       return;
@@ -1272,7 +1425,7 @@ function pressPV(mx, my) {
     }
   }
 
-  if (pv.carrito.length && enRect(mx, my, PV_ORDENAR)) ordenar();
+  if (pv.carrito.length && enRect(mx, my, pvOrdenar)) ordenar();
 }
 
 function ordenar() {
@@ -1328,14 +1481,14 @@ function dibujarModalFresas() {
 
   noStroke();
   fill(0, 115);
-  rect(0, -OFFSET_Y, BASE_W, MF_Y + OFFSET_Y);
+  rect(0, -OFFSET_Y - dyOverlay - 10, BASE_W, MF_Y + OFFSET_Y + dyOverlay + 10);
   fill(blanco);
-  rect(-20, MF_Y, BASE_W + 40, BASE_H, 30);
+  rect(-20, MF_Y, BASE_W + 40, 4000, 30);
 
   fill(texto);
   textAlign(LEFT, CENTER);
   textStyle(BOLD);
-  textSize(34);
+  textSize(36);
   text("Fresas con Crema", 50, 582);
   textStyle(NORMAL);
 
@@ -1345,13 +1498,13 @@ function dibujarModalFresas() {
   rect(c.x, c.y, c.w, c.h, 18);
   fill(textoSecundario);
   textAlign(CENTER, CENTER);
-  textSize(34);
+  textSize(36);
   text("×", c.x + c.w / 2, c.y + c.h / 2);
   textAlign(LEFT, CENTER);
 
   // Tamaño
   fill(textoSecundario);
-  textSize(18);
+  textSize(23);
   text("TAMAÑO", 50, 645);
   for (const k of ["chicas", "grandes"]) {
     const b = MF_TAM[k];
@@ -1363,13 +1516,15 @@ function dibujarModalFresas() {
     fill(sel ? blanco : texto);
     textAlign(CENTER, CENTER);
     textStyle(BOLD);
-    textSize(28);
+    textSize(31);
     text(FRESAS[k].corto, b.x + b.w / 2, b.y + 40);
     textStyle(NORMAL);
     fill(sel ? color(255, 220) : textoSecundario);
-    textSize(22);
-    const q = stockDe(FRESAS[k].nombre);
-    const extra = q === null ? "" : (q <= 0 ? "  ·  agotadas" : "  ·  quedan " + q);
+    textSize(27);
+    // Cuantas alcanzan con el stock de "Fresas" (chicas = 1, grandes = 1.5)
+    const q = stockDe("Fresas");
+    const alcanzan = q === null ? null : Math.floor(q / FRESAS[k].porcion + 1e-9);
+    const extra = alcanzan === null ? "" : (alcanzan <= 0 ? "  ·  agotadas" : "  ·  alcanzan " + alcanzan);
     text("$" + FRESAS[k].precio + extra, b.x + b.w / 2, b.y + 78);
   }
   textAlign(LEFT, CENTER);
@@ -1393,7 +1548,7 @@ function dibujarModalFresas() {
   // Cuanto se cobra
   const item = { prod: "fresas", tam: m.tam, premium: m.premium, clasicos: m.clasicos };
   fill(textoSecundario);
-  textSize(21);
+  textSize(26);
   textAlign(LEFT, CENTER);
   text(FRESAS[m.tam].nombre + " $" + FRESAS[m.tam].precio, 50, 1275);
   textAlign(RIGHT, CENTER);
@@ -1409,7 +1564,7 @@ function dibujarModalFresas() {
   fill(blanco);
   textAlign(CENTER, CENTER);
   textStyle(BOLD);
-  textSize(30);
+  textSize(33);
   text("AGREGAR  ·  $" + formato(precioItem(item)), a.x + a.w / 2, a.y + a.h / 2);
   textStyle(NORMAL);
   textAlign(LEFT, CENTER);
@@ -1419,16 +1574,16 @@ function encabezadoToppings(titulo, sub, llevan, max, y) {
   fill(texto);
   textAlign(LEFT, CENTER);
   textStyle(BOLD);
-  textSize(21);
+  textSize(24);
   text(titulo, 50, y);
   const w = textWidth(titulo);
   textStyle(NORMAL);
   fill(textoSecundario);
-  textSize(18);
+  textSize(21);
   text("  " + sub, 50 + w, y);
   fill(llevan >= max ? rojo : textoSecundario);
   textAlign(RIGHT, CENTER);
-  textSize(20);
+  textSize(25);
   text(llevan + " / " + max, 650, y);
   textAlign(LEFT, CENTER);
 }
@@ -1442,7 +1597,7 @@ function dibujarChip(b, nombre, sel, lleno, colorSel) {
   noStroke();
   fill(sel ? blanco : (bloqueado ? color('#C2C6C2') : texto));
   textAlign(CENTER, CENTER);
-  textSize(b.w > 250 ? 23 : 20);
+  textSize(b.w > 250 ? 25 : 21);
   text((sel ? "✓ " : "") + nombre, b.x + b.w / 2, b.y + b.h / 2);
   textAlign(LEFT, CENTER);
 }
@@ -1475,6 +1630,7 @@ function pressModalFresas(mx, my) {
     guardarPV();
     destello[N] = millis();
     modalFresas = null;
+    mantenerOrdenar = true;
   }
 }
 
@@ -1499,7 +1655,7 @@ function pantallaOrden() {
   textSize(44);
   text("Orden #" + o.n, 158, 80);
   fill(textoSecundario);
-  textSize(21);
+  textSize(26);
   text("Registrada a las " + o.hora, 160, 128);
 
   // Cancelar orden (doble toque)
@@ -1510,7 +1666,7 @@ function pantallaOrden() {
   rect(c.x, c.y, c.w, c.h, 20);
   fill(confirmando ? blanco : rojo);
   textAlign(CENTER, CENTER);
-  textSize(20);
+  textSize(25);
   text(confirmando ? "¿Cancelar?" : "Cancelar orden", c.x + c.w / 2, c.y + c.h / 2);
   textAlign(LEFT, CENTER);
 
@@ -1519,7 +1675,7 @@ function pantallaOrden() {
   const lineas = agruparItems(o.items);
 
   // Primero se calcula el alto para dibujar la tarjeta
-  textSize(19);
+  textSize(24);
   let filas = [];
   let y = top + 100;
   let ocultas = 0;
@@ -1538,7 +1694,7 @@ function pantallaOrden() {
   rect(30, top, 640, fondoTarjeta - top, 26);
 
   fill(textoSecundario);
-  textSize(19);
+  textSize(24);
   text("DETALLE DE LA ORDEN", 65, top + 45);
 
   for (const f of filas) {
@@ -1548,7 +1704,7 @@ function pantallaOrden() {
     ellipse(73, f.y + 24, 16, 16);
 
     fill(texto);
-    textSize(27);
+    textSize(30);
     textAlign(LEFT, CENTER);
     text((l.cant > 1 ? l.cant + " × " : "") + nombreItem(l.item), 95, f.y + 24);
     textAlign(RIGHT, CENTER);
@@ -1556,12 +1712,12 @@ function pantallaOrden() {
     textAlign(LEFT, CENTER);
 
     fill(textoSecundario);
-    textSize(19);
+    textSize(24);
     f.det.forEach((d, k) => text(d, 95, f.y + 62 + k * 30));
   }
   if (ocultas) {
     fill(textoSecundario);
-    textSize(19);
+    textSize(24);
     text("+ " + ocultas + " líneas más", 95, y + 10);
   }
 
@@ -1571,7 +1727,7 @@ function pantallaOrden() {
   noStroke();
 
   fill(texto);
-  textSize(24);
+  textSize(28);
   text("TOTAL", 65, fondoTarjeta - 50);
   textAlign(RIGHT, CENTER);
   textStyle(BOLD);
@@ -1585,7 +1741,7 @@ function pantallaOrden() {
   fill(verde);
   rect(30, cy, 640, 122, 26);
   fill(255, 210);
-  textSize(20);
+  textSize(25);
   text("TU COMISIÓN (18%) DE ESTA ORDEN", 65, cy + 38);
   fill(blanco);
   textStyle(BOLD);
@@ -1594,7 +1750,7 @@ function pantallaOrden() {
   textStyle(NORMAL);
 
   // ---------- Nueva orden ----------
-  ofNueva = { x: 30, y: Math.min(cy + 150, BARRA_Y - 135), w: 640, h: 110 };
+  ofNueva = { x: 30, y: cy + 150, w: 640, h: 112 };
   const b = ofNueva;
   fill(0, 22);
   rect(b.x, b.y + 6, b.w, b.h, 24);
@@ -1603,12 +1759,13 @@ function pantallaOrden() {
   fill(blanco);
   textAlign(CENTER, CENTER);
   textStyle(BOLD);
-  textSize(32);
+  textSize(34);
   text("NUEVA ORDEN", b.x + b.w / 2, b.y + b.h / 2);
   textStyle(NORMAL);
   textAlign(LEFT, CENTER);
 
-  dibujarBarraComision();
+  altoContenido = b.y + b.h + 30;
+
 }
 
 function pressOrden(mx, my) {
@@ -1685,25 +1842,25 @@ async function verificarPinDueno() {
 function dibujarPinDueno() {
   noStroke();
   fill(0, 115);
-  rect(0, -OFFSET_Y, BASE_W, PIN_Y + OFFSET_Y);
+  rect(0, -OFFSET_Y - dyOverlay - 10, BASE_W, PIN_Y + OFFSET_Y + dyOverlay + 10);
   fill(blanco);
-  rect(-20, PIN_Y, BASE_W + 40, BASE_H, 30);
+  rect(-20, PIN_Y, BASE_W + 40, 4000, 30);
 
   fill(texto);
   textAlign(CENTER, CENTER);
   textStyle(BOLD);
-  textSize(32);
+  textSize(34);
   text("PIN de dueño", 350, PIN_Y + 65);
   textStyle(NORMAL);
   fill(textoSecundario);
-  textSize(20);
+  textSize(25);
   text("Para entrar a Conteo Postres", 350, PIN_Y + 105);
 
   // Puntitos
   const n = pinDueno.length;
   if (n === 0) {
     fill(color('#B4B9B4'));
-    textSize(22);
+    textSize(27);
     text("Escribe tu PIN", 350, PIN_Y + 180);
   } else {
     fill(texto);
@@ -1713,7 +1870,7 @@ function dibujarPinDueno() {
 
   if (pinError) {
     fill(rojo);
-    textSize(21);
+    textSize(26);
     text(pinError, 350, PIN_Y + 245);
   }
 
@@ -1723,8 +1880,8 @@ function dibujarPinDueno() {
     rect(t.x, t.y, t.w, t.h, 18);
     textAlign(CENTER, CENTER);
     if (t.label === "<")          { fill(textoSecundario); textSize(40); text("←", t.x + t.w/2, t.y + t.h/2); }
-    else if (t.label === "SALIR") { fill(textoSecundario); textSize(22); text("SALIR", t.x + t.w/2, t.y + t.h/2); }
-    else                          { fill(texto); textSize(38); text(t.label, t.x + t.w/2, t.y + t.h/2); }
+    else if (t.label === "SALIR") { fill(textoSecundario); textSize(27); text("SALIR", t.x + t.w/2, t.y + t.h/2); }
+    else                          { fill(texto); textSize(40); text(t.label, t.x + t.w/2, t.y + t.h/2); }
   }
 
   const b = PIN_ENTRAR;
@@ -1732,7 +1889,7 @@ function dibujarPinDueno() {
   fill(activo ? verde : color('#D9DCD9'));
   rect(b.x, b.y, b.w, b.h, 20);
   fill(activo ? blanco : color('#A5AAA5'));
-  textSize(28);
+  textSize(31);
   text("ENTRAR", b.x + b.w/2, b.y + b.h/2);
   textAlign(LEFT, CENTER);
 }
@@ -1767,7 +1924,7 @@ function construirTeclado() {
     }
   }
 
-  botonSiguiente     = new Button(50, 1018, 600, 92, "SIGUIENTE", 28);
+  botonSiguiente     = new Button(50, 1018, 600, 92, "SIGUIENTE", 31);
   botonCerrarTeclado = new Button(550, 838, 100, 86, "×", 34);
 }
 
@@ -1782,19 +1939,19 @@ function dibujarTeclado() {
   // Oscurecer todo lo de arriba (incluye la franja del offset)
   noStroke();
   fill(0, 105);
-  rect(0, -OFFSET_Y, BASE_W, TEC_Y + OFFSET_Y);
+  rect(0, -OFFSET_Y - dyOverlay - 10, BASE_W, TEC_Y + OFFSET_Y + dyOverlay + 10);
 
   fill(blanco);
-  rect(-20, TEC_Y, BASE_W + 40, 1100, 30);
+  rect(-20, TEC_Y, BASE_W + 40, 4000, 30);
 
   // Que postre y que columna
   fill(texto);
   textAlign(LEFT, CENTER);
-  textSize(26);
+  textSize(30);
   text(postres[caja.producto], 50, 865);
 
   fill(verde);
-  textSize(20);
+  textSize(25);
   text(caja.tipo === "inv" ? "Inventario con el que abriste" : "Los que quedaron", 50, 900);
 
   fill(caja.text === "" ? color('#A5AAA5') : texto);
@@ -1803,12 +1960,12 @@ function dibujarTeclado() {
 
   // Cerrar
   noStroke();
-  fill(botonCerrarTeclado.isOver(mouseX, mouseY - OFFSET_Y) ? '#E6EAE6' : '#F2F4F2');
+  fill(botonCerrarTeclado.isOver(mouseX, mouseY - OFFSET_Y - dyOverlay) ? '#E6EAE6' : '#F2F4F2');
   rect(botonCerrarTeclado.x, botonCerrarTeclado.y,
        botonCerrarTeclado.w, botonCerrarTeclado.h, 18);
   fill(textoSecundario);
   textAlign(CENTER, CENTER);
-  textSize(34);
+  textSize(36);
   text("×", botonCerrarTeclado.x + botonCerrarTeclado.w/2,
                  botonCerrarTeclado.y + botonCerrarTeclado.h/2);
   textAlign(LEFT, CENTER);
@@ -1828,7 +1985,7 @@ function dibujarTeclado() {
       fill(textoSecundario); textSize(42);
       text("←", t.x + t.w/2, t.y + t.h/2);
     } else if (t.label === "C") {
-      fill(textoSecundario); textSize(24);
+      fill(textoSecundario); textSize(28);
       text("LIMPIAR", t.x + t.w/2, t.y + t.h/2);
     } else {
       fill(texto); textSize(40);
@@ -1864,7 +2021,7 @@ function siguienteCampo() {
   else cerrarTeclado();
 }
 
-function pressTeclado(mx, my) {
+function pressTeclado(mx, my, myLienzo) {
 
   if (botonCerrarTeclado.isOver(mx, my)) { cerrarTeclado(); return; }
   if (botonSiguiente.isOver(mx, my))     { siguienteCampo(); return; }
@@ -1878,7 +2035,11 @@ function pressTeclado(mx, my) {
     }
   }
 
-  if (my < TEC_Y) cerrarTeclado();
+  // Arriba del teclado: si toco otra casilla, me paso a esa
+  if (my < TEC_Y) {
+    for (const c of cajas) if (c.isOver(mx, myLienzo)) { c.activate(); return; }
+    cerrarTeclado();
+  }
 }
 
 // ============================================================
@@ -1954,7 +2115,7 @@ function calcularDesdePV() {
 
   const fecha = fechaDesdeIso(fuente.fecha);
   subtituloResumen = "Punto de Venta · " + fuente.ordenes.length +
-                     (fuente.ordenes.length === 1 ? " orden · " : " órdenes · ") + textoFecha(fecha);
+                     (fuente.ordenes.length === 1 ? " orden" : " órdenes");
   terminarCalculo(3);
   fechaRegistro = fecha;
 }
@@ -2005,13 +2166,9 @@ function irAPV()      {
 // MOUSE / TOUCH
 // ============================================================
 
-function mousePressed() { handlePress(mouseX, mouseY); }
 
-function touchStarted() {
-  if (touches.length > 0) handlePress(touches[0].x, touches[0].y);
-  else handlePress(mouseX, mouseY);
-  return false;
-}
+
+
 
 function handlePress(mxRaw, myRaw) {
 
@@ -2019,8 +2176,8 @@ function handlePress(mxRaw, myRaw) {
   const mx = mxRaw;
   const my = myRaw - OFFSET_Y;
 
-  if (pinDueno !== null) { pressPinDueno(mx, my); return; }
-  if (tecladoAbierto()) { pressTeclado(mx, my); return; }
+  const ov = overlayActual();
+  if (ov) { ov.press(mx, my - dyOverlay, my); return; }
 
   if (pantalla === 0) {
 
@@ -2141,7 +2298,7 @@ class TextBox {
     rect(this.x, this.y, this.w, this.h, 18);
 
     textAlign(CENTER, CENTER);
-    textSize(32);
+    textSize(34);
 
     if (this.text === "") { fill('#A5AAA5'); text("0", this.x + this.w/2, this.y + this.h/2); }
     else                  { fill(texto);     text(this.text, this.x + this.w/2, this.y + this.h/2); }
@@ -2164,6 +2321,7 @@ class TextBox {
     for (const c of cajas) c.active = false;
     this.active = true;
     activeBoxIndex = this.indice;
+    cajaPorMostrar = this;
   }
 
   getText() { return this.text; }
@@ -2230,17 +2388,17 @@ class BigButton {
 
     fill(255, 150);
     textAlign(RIGHT, CENTER);
-    textSize(36);
+    textSize(38);
     text("→", this.x + this.w - 42, this.y + this.h/2);
 
     fill(blanco);
     textAlign(LEFT, CENTER);
-    textSize(38);
-    text(this.label, this.x + 45, this.y + this.h/2 - 24);
+    textSize(44);
+    text(this.label, this.x + 45, this.y + this.h/2 - 26);
 
     fill(255, 190);
-    textSize(21);
-    text(this.sublabel, this.x + 45, this.y + this.h/2 + 30);
+    textSize(26);
+    text(this.sublabel, this.x + 45, this.y + this.h/2 + 34);
 
     textAlign(LEFT, CENTER);
   }

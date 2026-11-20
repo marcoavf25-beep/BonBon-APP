@@ -183,6 +183,15 @@ const MF_AGREGAR  = { x: 50, y: 1315, w: 600, h: 110 };
 const OF_CANCELAR = { x: 470, y: 52, w: 190, h: 76 };
 let ofNueva = { x: 30, y: 1450, w: 640, h: 110 };
 
+// ---------- PIN DE DUEÑO (para entrar a Conteo Postres) ----------
+// Se guarda cifrado (SHA-256), no el PIN tal cual
+const PIN_DUENO_HASH = "3b1e53716e25c357d144145ae01cd61d5b32042ea2e94273791e661fb571159f";
+let pinDueno = null;      // null = cerrado | texto mientras se escribe
+let pinError = "";
+let pinTeclas = [];
+const PIN_Y = 690;
+const PIN_ENTRAR = { x: 50, y: 1395, w: 600, h: 100 };
+
 // ---------- REGISTRO EN GOOGLE SHEETS ----------
 // Pega aqui la URL de tu Apps Script (la que termina en /exec)
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzN5uqXgdOttbFZNiKcQQV1w_ozp3v-rgZNuWHN86HYLB-kof8JcjaeOO3nuFAxFwBs/exec";
@@ -223,7 +232,7 @@ function setup() {
   }
 
   botonInicio = new BigButton(60, 690, 580, 170,
-    "Conteo Postres", "Inventario, ventas y ganancia del día", verde, verdeHover);
+    "Conteo Postres", "Solo dueño · inventario, ventas y ganancia", verde, verdeHover);
   botonPV = new BigButton(60, 885, 580, 170,
     "Punto de Venta", "Registra cada orden del día", rojo, rojoHover);
   botonCierrePV = { x: 60, y: 1080, w: 580, h: 116,
@@ -244,6 +253,7 @@ function setup() {
   }
 
   construirTeclado();
+  construirTecladoPin();
   cargarPV();
   updateCanvasSize();
 }
@@ -276,6 +286,7 @@ function draw() {
   else                     pantallaOrden();
 
   if (tecladoAbierto()) dibujarTeclado();
+  if (pinDueno !== null) dibujarPinDueno();
   if (pantalla === 3 && modalFresas) dibujarModalFresas();
 
   pop();
@@ -1483,6 +1494,120 @@ function pressOrden(mx, my) {
 }
 
 // ============================================================
+// PIN DE DUEÑO (se pide cada vez que se entra a Conteo Postres)
+// ============================================================
+
+function construirTecladoPin() {
+  const labels = [["1","2","3"], ["4","5","6"], ["7","8","9"], ["SALIR","0","<"]];
+  const xs = [50, 255, 460];
+  const ys = [995, 1090, 1185, 1280];
+  pinTeclas = [];
+  for (let r = 0; r < 4; r++)
+    for (let c = 0; c < 3; c++)
+      pinTeclas.push({ label: labels[r][c], x: xs[c], y: ys[r], w: 190, h: 82 });
+}
+
+function abrirPinDueno() {
+  pinDueno = "";
+  pinError = "";
+}
+
+function escribirPin(d) {
+  if (pinDueno.length < 8) pinDueno += d;
+  pinError = "";
+}
+
+async function sha256Hex(textoPlano) {
+  const datos = new TextEncoder().encode(textoPlano);
+  const buf = await crypto.subtle.digest("SHA-256", datos);
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function verificarPinDueno() {
+  if (pinDueno === null || pinDueno === "") return;
+  const intento = pinDueno;
+  let ok = false;
+  try { ok = (await sha256Hex("bonbon:" + intento)) === PIN_DUENO_HASH; }
+  catch (e) { pinError = "No se pudo revisar el PIN"; return; }
+  if (pinDueno === null) return;              // se cerro mientras revisaba
+  if (ok) {
+    pinDueno = null;
+    irACaptura();
+  } else {
+    pinDueno = "";
+    pinError = "PIN incorrecto";
+  }
+}
+
+function dibujarPinDueno() {
+  noStroke();
+  fill(0, 115);
+  rect(0, -OFFSET_Y, BASE_W, PIN_Y + OFFSET_Y);
+  fill(blanco);
+  rect(-20, PIN_Y, BASE_W + 40, BASE_H, 30);
+
+  fill(texto);
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  textSize(32);
+  text("PIN de dueño", 350, PIN_Y + 65);
+  textStyle(NORMAL);
+  fill(textoSecundario);
+  textSize(20);
+  text("Para entrar a Conteo Postres", 350, PIN_Y + 105);
+
+  // Puntitos
+  const n = pinDueno.length;
+  if (n === 0) {
+    fill(color('#B4B9B4'));
+    textSize(22);
+    text("Escribe tu PIN", 350, PIN_Y + 180);
+  } else {
+    fill(texto);
+    const sep = 40, x0 = 350 - (n - 1) * sep / 2;
+    for (let i = 0; i < n; i++) ellipse(x0 + i * sep, PIN_Y + 180, 22, 22);
+  }
+
+  if (pinError) {
+    fill(rojo);
+    textSize(21);
+    text(pinError, 350, PIN_Y + 245);
+  }
+
+  for (const t of pinTeclas) {
+    noStroke();
+    fill('#F2F4F2');
+    rect(t.x, t.y, t.w, t.h, 18);
+    textAlign(CENTER, CENTER);
+    if (t.label === "<")          { fill(textoSecundario); textSize(40); text("←", t.x + t.w/2, t.y + t.h/2); }
+    else if (t.label === "SALIR") { fill(textoSecundario); textSize(22); text("SALIR", t.x + t.w/2, t.y + t.h/2); }
+    else                          { fill(texto); textSize(38); text(t.label, t.x + t.w/2, t.y + t.h/2); }
+  }
+
+  const b = PIN_ENTRAR;
+  const activo = n > 0;
+  fill(activo ? verde : color('#D9DCD9'));
+  rect(b.x, b.y, b.w, b.h, 20);
+  fill(activo ? blanco : color('#A5AAA5'));
+  textSize(28);
+  text("ENTRAR", b.x + b.w/2, b.y + b.h/2);
+  textAlign(LEFT, CENTER);
+}
+
+function pressPinDueno(mx, my) {
+  if (my < PIN_Y) { pinDueno = null; return; }
+  if (enRect(mx, my, PIN_ENTRAR)) { verificarPinDueno(); return; }
+  for (const t of pinTeclas) {
+    if (enRect(mx, my, t)) {
+      if (t.label === "SALIR")  pinDueno = null;
+      else if (t.label === "<") { pinDueno = pinDueno.slice(0, -1); pinError = ""; }
+      else                      escribirPin(t.label);
+      return;
+    }
+  }
+}
+
+// ============================================================
 // TECLADO NUMERICO EN PANTALLA
 // ============================================================
 
@@ -1726,7 +1851,7 @@ function cerrarTeclado() {
   activeBoxIndex = -1;
 }
 
-function irAInicio()  { pantalla = 0; cerrarTeclado(); modalFresas = null; }
+function irAInicio()  { pantalla = 0; cerrarTeclado(); modalFresas = null; pinDueno = null; }
 function irACaptura() { pantalla = 1; cerrarTeclado(); confirmarBorrar = SIN_CONFIRMAR; }
 function irAPV()      { asegurarDia(); pantalla = 3; modalFresas = null; confirmarVaciar = SIN_CONFIRMAR; }
 
@@ -1748,11 +1873,12 @@ function handlePress(mxRaw, myRaw) {
   const mx = mxRaw;
   const my = myRaw - OFFSET_Y;
 
+  if (pinDueno !== null) { pressPinDueno(mx, my); return; }
   if (tecladoAbierto()) { pressTeclado(mx, my); return; }
 
   if (pantalla === 0) {
 
-    if (botonInicio.isOver(mx, my))          irACaptura();
+    if (botonInicio.isOver(mx, my))          abrirPinDueno();
     else if (botonPV.isOver(mx, my))         irAPV();
     else if (botonCierrePV.isOver(mx, my))   calcularDesdePV();
 
@@ -1791,6 +1917,14 @@ function handlePress(mxRaw, myRaw) {
 // ============================================================
 
 function keyPressed() {
+
+  if (pinDueno !== null) {
+    if (key >= '0' && key <= '9')                 escribirPin(key);
+    else if (keyCode === BACKSPACE)               pinDueno = pinDueno.slice(0, -1);
+    else if (keyCode === ENTER || keyCode === RETURN) verificarPinDueno();
+    else if (keyCode === ESCAPE)                  pinDueno = null;
+    return false;
+  }
 
   if (pantalla !== 1) return;
 

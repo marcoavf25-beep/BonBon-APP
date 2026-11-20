@@ -38,7 +38,7 @@
 // ============================================================
 
 const BASE_W = 700;
-const BASE_H = 1700;
+const BASE_H = 1840;
 
 // Todo el contenido baja este tanto para librar la camara del celular
 const OFFSET_Y = 70;
@@ -73,7 +73,8 @@ const postres = [
   "Pan de Elote"
 ];
 const precios = [55, 80, 65, 80, 60, 85, 85, 60];
-const costos  = [16.5, 25, 18, 23, 19, 28, 29, 17.5];
+// Costo unitario del producto (hoja Recetas: ingredientes + desechables + indirectos)
+const costos  = [16.74, 24.86, 18.23, 23.44, 17.59, 25.49, 28.92, 17.87];
 const N = postres.length;
 
 // ---------- CAJAS DE CAPTURA ----------
@@ -99,6 +100,19 @@ let botonInicio, botonCalcular, botonAtras;
 let teclas = [];
 let botonSiguiente, botonCerrarTeclado;
 const TEC_Y = 810;
+
+// ---------- REGISTRO EN GOOGLE SHEETS ----------
+// Pega aqui la URL de tu Apps Script (la que termina en /exec)
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzN5uqXgdOttbFZNiKcQQV1w_ozp3v-rgZNuWHN86HYLB-kof8JcjaeOO3nuFAxFwBs/exec";
+
+let botonRegistrar, botonDiaAntes, botonDiaDespues;
+let estadoRegistro = "listo";   // listo | enviando | ok | actualizado | error
+let mensajeRegistro = "";
+let fechaRegistro = fechaPorDefecto();
+
+const DIAS  = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
+const MESES = ["ene", "feb", "mar", "abr", "may", "jun",
+               "jul", "ago", "sep", "oct", "nov", "dic"];
 
 // ============================================================
 // SETUP
@@ -130,6 +144,10 @@ function setup() {
 
   botonCalcular = new Button(60, 1310, 580, 100, "CALCULAR", 28);
   botonAtras    = new Button(40, 52, 92, 76, "←", 30);
+
+  botonDiaAntes   = new Button(30,  1610, 100, 116, "‹", 46);
+  botonRegistrar  = new Button(145, 1610, 410, 116, "REGISTRAR", 30);
+  botonDiaDespues = new Button(570, 1610, 100, 116, "›", 46);
 
   construirTeclado();
   updateCanvasSize();
@@ -390,6 +408,145 @@ function pantallaResultados() {
   fill(profitSinEmpleado < 0 ? rojo : verde);
   textSize(42);
   text("$" + formato(profitSinEmpleado), 65, 1546);
+
+  dibujarRegistro();
+}
+
+// ============================================================
+// REGISTRAR EN GOOGLE SHEETS
+// ============================================================
+
+function dibujarRegistro() {
+
+  // Flechas para cambiar el dia que se registra
+  for (const b of [botonDiaAntes, botonDiaDespues]) {
+    noStroke();
+    fill(b.isOver(mouseX, mouseY - OFFSET_Y) ? '#E6EAE6' : blanco);
+    rect(b.x, b.y, b.w, b.h, 22);
+    fill(textoSecundario);
+    textAlign(CENTER, CENTER);
+    textSize(b.fontSize);
+    text(b.label, b.x + b.w/2, b.y + b.h/2 - 4);
+  }
+
+  const b = botonRegistrar;
+  let fondoBoton = b.isOver(mouseX, mouseY - OFFSET_Y) ? verdeHover : verde;
+  let titulo = "REGISTRAR";
+  let subtitulo = textoFecha(fechaRegistro);
+
+  if (estadoRegistro === "enviando") {
+    fondoBoton = color('#8FA898'); titulo = "REGISTRANDO…";
+  } else if (estadoRegistro === "ok") {
+    fondoBoton = color('#2F5A41'); titulo = "✓ REGISTRADO";
+  } else if (estadoRegistro === "actualizado") {
+    fondoBoton = color('#2F5A41'); titulo = "✓ ACTUALIZADO";
+  } else if (estadoRegistro === "error") {
+    fondoBoton = rojo; titulo = "REINTENTAR"; subtitulo = mensajeRegistro;
+  }
+
+  noStroke();
+  fill(0, 20);
+  rect(b.x, b.y + 6, b.w, b.h, 22);
+  fill(fondoBoton);
+  rect(b.x, b.y, b.w, b.h, 22);
+
+  fill(blanco);
+  textAlign(CENTER, CENTER);
+  textSize(30);
+  text(titulo, b.x + b.w/2, b.y + b.h/2 - 18);
+  fill(255, 210);
+  textSize(19);
+  text(subtitulo, b.x + b.w/2, b.y + b.h/2 + 26);
+  textAlign(LEFT, CENTER);
+}
+
+// Si cierras de madrugada (antes de las 5 am) se propone el dia anterior
+function fechaPorDefecto() {
+  const d = new Date();
+  if (d.getHours() < 5) d.setDate(d.getDate() - 1);
+  d.setHours(12, 0, 0, 0);
+  return d;
+}
+
+function textoFecha(d) {
+  return DIAS[d.getDay()] + " " + d.getDate() + " " + MESES[d.getMonth()] + " " + d.getFullYear();
+}
+
+function isoFecha(d) {
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  return d.getFullYear() + "-" + mm + "-" + dd;
+}
+
+function moverFecha(n) {
+  if (estadoRegistro === "enviando") return;
+  const nueva = new Date(fechaRegistro);
+  nueva.setDate(nueva.getDate() + n);
+  const hoy = new Date();
+  hoy.setHours(23, 59, 59, 999);
+  if (nueva > hoy) return;               // no se registran dias futuros
+  fechaRegistro = nueva;
+  estadoRegistro = "listo";
+}
+
+function leerPin() {
+  try { return localStorage.getItem("bonbon_pin") || ""; } catch (e) { return ""; }
+}
+function guardarPin(pin) {
+  try { localStorage.setItem("bonbon_pin", pin); } catch (e) {}
+}
+function borrarPin() {
+  try { localStorage.removeItem("bonbon_pin"); } catch (e) {}
+}
+
+function errorRegistro(msg) {
+  estadoRegistro = "error";
+  mensajeRegistro = msg;
+}
+
+async function registrar() {
+
+  if (estadoRegistro === "enviando") return;
+
+  if (!SCRIPT_URL.startsWith("https://")) { errorRegistro("Falta la URL del script"); return; }
+  if (totalPostres === 0)                 { errorRegistro("No hay ventas capturadas"); return; }
+
+  let pin = leerPin();
+  if (!pin) {
+    pin = (window.prompt("PIN de BON BON (solo se pide una vez):") || "").trim();
+    if (!pin) return;
+    guardarPin(pin);
+  }
+
+  estadoRegistro = "enviando";
+
+  const datos = {
+    pin: pin,
+    fecha: isoFecha(fechaRegistro),
+    ventaTotal: ventaTotal,
+    costoPostres: costoProduccion,
+    utilidad: ventaTotal - costoProduccion,   // venta - costo de cada postre vendido
+    totalPostres: totalPostres,
+    comisionEmpleado: comisionEmpleado,
+    gastosFijos: RENTA + LUZ + GAS,
+    profitLibre: profitLibre,
+    profitSinEmpleado: profitSinEmpleado,
+    postres: postres.slice(),
+    vendidos: vendidos.slice()
+  };
+
+  try {
+    // Sin encabezados extra para que Google no bloquee la peticion (CORS)
+    const r = await fetch(SCRIPT_URL, { method: "POST", body: JSON.stringify(datos) });
+    const j = await r.json();
+
+    if (j.ok)                    estadoRegistro = j.actualizado ? "actualizado" : "ok";
+    else if (j.error === "PIN")  { borrarPin(); errorRegistro("PIN incorrecto"); }
+    else                         errorRegistro("Error en el Sheet");
+
+  } catch (e) {
+    errorRegistro("Sin conexión, reintenta");
+  }
 }
 
 // ---------- Fila etiqueta / valor ----------
@@ -441,7 +598,7 @@ function dibujarTeclado() {
   rect(0, -OFFSET_Y, BASE_W, TEC_Y + OFFSET_Y);
 
   fill(blanco);
-  rect(-20, TEC_Y, BASE_W + 40, 900, 30);
+  rect(-20, TEC_Y, BASE_W + 40, 1100, 30);
 
   // Que postre y que columna
   fill(texto);
@@ -586,6 +743,10 @@ function calcularResultados() {
   profitLibre       = ventaTotal - totalGastos;   // pagando al empleado
   profitSinEmpleado = ventaTotal - gastosBase;    // si vendiste tu
 
+  // Cada calculo nuevo se puede volver a registrar
+  estadoRegistro = "listo";
+  fechaRegistro = fechaPorDefecto();
+
   pantalla = 2;
   cerrarTeclado();
 }
@@ -636,7 +797,10 @@ function handlePress(mxRaw, myRaw) {
 
   } else {
 
-    if (botonAtras.isOver(mx, my)) irACaptura();
+    if (botonAtras.isOver(mx, my))      { irACaptura();    return; }
+    if (botonRegistrar.isOver(mx, my))  { registrar();     return; }
+    if (botonDiaAntes.isOver(mx, my))   { moverFecha(-1);  return; }
+    if (botonDiaDespues.isOver(mx, my)) { moverFecha(1);   return; }
   }
 }
 

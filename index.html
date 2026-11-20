@@ -33,8 +33,9 @@
 
 <script>
 // ============================================================
-//  CONTEO POSTRES - BON BON
-//  Inventario inicial - lo que quedo = vendidos
+//  BON BON - Conteo Postres + Punto de Venta
+//  Conteo: inventario inicial - lo que quedo = vendidos
+//  Punto de Venta: el empleado registra cada orden del dia
 // ============================================================
 
 const BASE_W = 700;
@@ -44,10 +45,10 @@ const BASE_H = 1840;
 const OFFSET_Y = 70;
 
 // ---------- COLORES ----------
-let fondo, blanco, texto, textoSecundario, verde, verdeHover, borde, rojo;
+let fondo, blanco, texto, textoSecundario, verde, verdeHover, borde, rojo, rojoHover;
 
 // ---------- PANTALLAS ----------
-// 0 = inicio | 1 = captura | 2 = resultados
+// 0 = inicio | 1 = captura | 2 = resultados | 3 = punto de venta | 4 = orden final
 let pantalla = 0;
 
 // ---------- GASTOS FIJOS DEL DIA ----------
@@ -77,13 +78,57 @@ const precios = [55, 80, 65, 80, 60, 85, 85, 60];
 const costos  = [16.74, 24.86, 18.23, 23.44, 17.59, 25.49, 28.92, 17.87];
 const N = postres.length;
 
+// ---------- FRESAS CON CREMA (solo en Punto de Venta) ----------
+const FRESAS = {
+  chicas:  { nombre: "Fresas Chicas",  corto: "Chicas",  precio: 70,  costo: 32.33 },
+  grandes: { nombre: "Fresas Grandes", corto: "Grandes", precio: 100, costo: 48.37 }
+};
+
+// Toppings (costos de la hoja Recetas)
+const TOP_PREMIUM = [
+  { nombre: "Lotus Biscoff", costo: 3.50 },
+  { nombre: "Nuez",          costo: 1.66 },
+  { nombre: "KitKat",        costo: 1.26 },
+  { nombre: "Bubulubu",      costo: 1.12 }
+];
+const TOP_CLASICOS = [
+  { nombre: "Oreo",            costo: 0.28 },
+  { nombre: "Lunetas",         costo: 0.60 },
+  { nombre: "Mazapán",         costo: 0.48 },
+  { nombre: "Chispas Choco",   costo: 0.75 },
+  { nombre: "Coco Rallado",    costo: 0.30 },
+  { nombre: "Chispas Colores", costo: 0.48 }
+];
+const MAX_PREMIUM  = 2;
+const MAX_CLASICOS = 4;
+const PRECIO_PREMIUM  = 10;   // con premium, los clasicos ya van incluidos
+const PRECIO_CLASICOS = 5;
+
+// Colores de cada postre en el Punto de Venta: [fondo, acento]
+const COLORES_PV = [
+  ['#E4F1D2', '#4E7A1E'],   // Carlota
+  ['#FFECC7', '#A86A00'],   // Pay de Queso
+  ['#FFDDCB', '#B4501A'],   // Flan Napolitano
+  ['#E9E1F5', '#5B3F8C'],   // Tiramisu
+  ['#D6EEEA', '#1F6F66'],   // Besito de Nuez
+  ['#FCDDE6', '#B8284F'],   // Cheesecake de Fresa
+  ['#E0E4EB', '#2C3440'],   // Cheesecake de Oreo
+  ['#FFF4BD', '#857000']    // Pan de Elote
+];
+const NOMBRES_TILE = [
+  ["Carlota", "de Limón"], ["Pay de", "Queso"], ["Flan", "Napolitano"], ["Tiramisú"],
+  ["Besito", "de Nuez"], ["Cheesecake", "de Fresa"], ["Cheesecake", "de Oreo"], ["Pan de", "Elote"]
+];
+
 // ---------- CAJAS DE CAPTURA ----------
 // Orden: inventario0, restante0, inventario1, restante1, ...
 let cajas = [];
 let activeBoxIndex = -1;
 
 // ---------- RESULTADOS ----------
-let vendidos = new Array(N).fill(0);
+// Ultimo lugar = Fresas con Crema (solo se vende en Punto de Venta)
+const NOMBRES_RESUMEN = postres.concat(["Fresas con Crema"]);
+let vendidos = new Array(N + 1).fill(0);
 let totalPostres = 0;
 let ventaTotal = 0;
 let costoProduccion = 0;
@@ -94,12 +139,47 @@ let profitLibre = 0;        // pagando al empleado
 let profitSinEmpleado = 0;  // si vendiste tu
 let postreMasVendido = "-";
 let cantidadMayor = 0;
+let origenResumen = 1;      // a donde regresa la flecha: 1 conteo | 3 punto de venta
+let subtituloResumen = "Conteo, venta y ganancia";
 
 // ---------- BOTONES ----------
-let botonInicio, botonCalcular, botonAtras;
+let botonInicio, botonPV, botonCierrePV, botonCalcular, botonAtras, botonBorrar;
 let teclas = [];
 let botonSiguiente, botonCerrarTeclado;
 const TEC_Y = 810;
+
+// Confirmaciones de doble toque (guardan el momento del primer toque)
+const SIN_CONFIRMAR = -1e9;
+let confirmarBorrar = SIN_CONFIRMAR;
+let confirmarVaciar = SIN_CONFIRMAR;
+let confirmarCancelar = SIN_CONFIRMAR;
+const TIEMPO_CONFIRMAR = 3000;
+
+// ---------- PUNTO DE VENTA ----------
+const PV_KEY = "bonbon_pv";
+let pv = { fecha: "", ordenes: [], siguiente: 1, carrito: [], anterior: null };
+let ultimaOrden = null;      // la que se muestra en la pantalla final
+let modalFresas = null;      // { tam, premium: [], clasicos: [] } mientras se arma
+let tiles = [];
+let destello = new Array(N + 1).fill(-9999);
+
+// Medidas del Punto de Venta
+const PV_CARRITO_Y = 670, PV_CARRITO_H = 770;
+const PV_LINEA_Y0 = 765, PV_LINEA_H = 74, PV_MAX_LINEAS = 8;
+const PV_ORDENAR = { x: 30, y: 1460, w: 640, h: 110 };
+const PV_VACIAR  = { x: 520, y: 682, w: 130, h: 56 };
+const BARRA_Y = 1600;
+
+// Medidas de la ventana de fresas
+const MF_Y = 520;
+const MF_CERRAR   = { x: 570, y: 545, w: 90, h: 76 };
+const MF_TAM      = { chicas: { x: 50, y: 668, w: 290, h: 110 },
+                      grandes: { x: 360, y: 668, w: 290, h: 110 } };
+const MF_AGREGAR  = { x: 50, y: 1315, w: 600, h: 110 };
+
+// Pantalla de orden final
+const OF_CANCELAR = { x: 470, y: 52, w: 190, h: 76 };
+let ofNueva = { x: 30, y: 1450, w: 640, h: 110 };
 
 // ---------- REGISTRO EN GOOGLE SHEETS ----------
 // Pega aqui la URL de tu Apps Script (la que termina en /exec)
@@ -131,6 +211,7 @@ function setup() {
   verdeHover      = color('#608A70');
   borde           = color('#DDE2DD');
   rojo            = color('#C20034');
+  rojoHover       = color('#D61A4C');
 
   // Dos cajas por producto
   for (let i = 0; i < N; i++) {
@@ -139,17 +220,29 @@ function setup() {
     cajas.push(new TextBox(515, y, 140, 78, i, "uni"));
   }
 
-  botonInicio = new BigButton(60, 850, 580, 180,
-    "Conteo Postres", "Inventario, ventas y ganancia del día");
+  botonInicio = new BigButton(60, 690, 580, 170,
+    "Conteo Postres", "Inventario, ventas y ganancia del día", verde, verdeHover);
+  botonPV = new BigButton(60, 885, 580, 170,
+    "Punto de Venta", "Registra cada orden del día", rojo, rojoHover);
+  botonCierrePV = { x: 60, y: 1080, w: 580, h: 116,
+    isOver(mx, my) { return enRect(mx, my, this); } };
 
   botonCalcular = new Button(60, 1310, 580, 100, "CALCULAR", 28);
   botonAtras    = new Button(40, 52, 92, 76, "←", 30);
+  botonBorrar   = { x: 578, y: 52, w: 92, h: 76 };
 
   botonDiaAntes   = new Button(30,  1610, 100, 116, "‹", 46);
   botonRegistrar  = new Button(145, 1610, 410, 116, "REGISTRAR", 30);
   botonDiaDespues = new Button(570, 1610, 100, 116, "›", 46);
 
+  // Botones de postres: 3 x 3 (el ultimo es Fresas)
+  const xs = [30, 249, 468], ys = [170, 335, 500];
+  for (let i = 0; i <= N; i++) {
+    tiles.push({ x: xs[i % 3], y: ys[Math.floor(i / 3)], w: 202, h: 150 });
+  }
+
   construirTeclado();
+  cargarPV();
   updateCanvasSize();
 }
 
@@ -176,9 +269,12 @@ function draw() {
 
   if (pantalla === 0)      pantallaInicio();
   else if (pantalla === 1) pantallaCaptura();
-  else                     pantallaResultados();
+  else if (pantalla === 2) pantallaResultados();
+  else if (pantalla === 3) pantallaPV();
+  else                     pantallaOrden();
 
   if (tecladoAbierto()) dibujarTeclado();
+  if (pantalla === 3 && modalFresas) dibujarModalFresas();
 
   pop();
 }
@@ -192,24 +288,46 @@ function pantallaInicio() {
   fill(rojo);
   textAlign(CENTER, CENTER);
   textSize(26);
-  text("BON BON", 350, 600);
+  text("BON BON", 350, 470);
 
   fill(texto);
   textSize(58);
-  text("Control de Ventas", 350, 675);
+  text("Control de Ventas", 350, 545);
 
   fill(textoSecundario);
   textSize(24);
-  text("Cierre del día", 350, 735);
+  text("Cierre del día", 350, 605);
 
   textAlign(LEFT, CENTER);
   botonInicio.display();
+  botonPV.display();
+
+  // Cierre con las ventas del Punto de Venta
+  const b = botonCierrePV;
+  const t = totalesPV();
+  noStroke();
+  fill(b.isOver && enRect(mouseX, mouseY - OFFSET_Y, b) ? '#F0F2F0' : blanco);
+  rect(b.x, b.y, b.w, b.h, 24);
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textSize(25);
+  text("Cierre con Punto de Venta", b.x + 40, b.y + 40);
+  fill(textoSecundario);
+  textSize(19);
+  text(t.ordenes + (t.ordenes === 1 ? " orden hoy" : " órdenes hoy") +
+       " · ver resumen y registrar", b.x + 40, b.y + 78);
+  fill(textoSecundario);
+  textAlign(RIGHT, CENTER);
+  textSize(32);
+  text("→", b.x + b.w - 40, b.y + b.h / 2);
 
   fill(textoSecundario);
   textAlign(CENTER, CENTER);
   textSize(19);
-  text("Precios y costos configurados en el sistema", 350, 1130);
+  text("Precios y costos configurados en el sistema", 350, 1260);
   textAlign(LEFT, CENTER);
+
+  dibujarBarraComision();
 }
 
 // ============================================================
@@ -225,9 +343,25 @@ function pantallaCaptura() {
   textSize(44);
   text("Conteo Postres", 158, 80);
 
-  fill(textoSecundario);
-  textSize(21);
-  text("Con cuántos abriste y cuántos quedaron", 160, 128);
+  const confirmando = millis() - confirmarBorrar < TIEMPO_CONFIRMAR;
+  if (confirmando) {
+    fill(rojo);
+    textSize(21);
+    text("Toca otra vez la basura para borrar todo", 160, 128);
+  } else {
+    fill(textoSecundario);
+    textSize(21);
+    text("Con cuántos abriste y cuántos quedaron", 160, 128);
+  }
+
+  // Boton para borrar todas las casillas
+  const b = botonBorrar;
+  noStroke();
+  fill(0, 16);
+  rect(b.x, b.y + 5, b.w, b.h, 20);
+  fill(confirmando ? rojo : color('#FBE5EA'));
+  rect(b.x, b.y, b.w, b.h, 20);
+  dibujarIconoBasura(b.x + b.w / 2, b.y + b.h / 2 + 2, confirmando ? blanco : rojo);
 
   fill(blanco);
   noStroke();
@@ -268,6 +402,33 @@ function pantallaCaptura() {
   textSize(19);
   text("INVENTARIO = con los que abriste · UNIDADES = los que quedaron", 350, 1500);
   textAlign(LEFT, CENTER);
+
+  dibujarBarraComision();
+}
+
+function dibujarIconoBasura(cx, cy, col) {
+  noFill();
+  stroke(col);
+  strokeWeight(4);
+  line(cx - 19, cy - 14, cx + 19, cy - 14);     // tapa
+  line(cx - 7,  cy - 21, cx + 7,  cy - 21);     // asa
+  line(cx - 7,  cy - 21, cx - 7,  cy - 14);
+  line(cx + 7,  cy - 21, cx + 7,  cy - 14);
+  rect(cx - 14, cy - 9, 28, 31, 4);             // bote
+  line(cx - 5, cy - 2, cx - 5, cy + 15);
+  line(cx + 5, cy - 2, cx + 5, cy + 15);
+  noStroke();
+}
+
+function pressBorrarTodo() {
+  if (millis() - confirmarBorrar < TIEMPO_CONFIRMAR) {
+    for (const c of cajas) c.text = "";
+    cerrarTeclado();
+    confirmarBorrar = SIN_CONFIRMAR;
+  } else {
+    cerrarTeclado();
+    confirmarBorrar = millis();
+  }
 }
 
 // ============================================================
@@ -285,7 +446,7 @@ function pantallaResultados() {
 
   fill(textoSecundario);
   textSize(21);
-  text("Conteo, venta y ganancia", 160, 128);
+  text(subtituloResumen, 160, 128);
 
   // ---------- Totales ----------
   fill(blanco);
@@ -333,13 +494,13 @@ function pantallaResultados() {
   textSize(28);
   text("Vendidos por postre", 65, 505);
 
-  for (let i = 0; i < N; i++) {
-    let y = 555 + i * 40;
+  for (let i = 0; i <= N; i++) {
+    let y = 552 + i * 36;
 
     fill(textoSecundario);
     textSize(21);
     textAlign(LEFT, CENTER);
-    text(postres[i], 65, y);
+    text(NOMBRES_RESUMEN[i], 65, y);
 
     fill(vendidos[i] > 0 ? texto : color('#B4B9B4'));
     textSize(24);
@@ -468,6 +629,11 @@ function fechaPorDefecto() {
   return d;
 }
 
+function fechaDesdeIso(s) {
+  const p = String(s).split("-").map(Number);
+  return new Date(p[0], p[1] - 1, p[2], 12, 0, 0, 0);
+}
+
 function textoFecha(d) {
   return DIAS[d.getDay()] + " " + d.getDate() + " " + MESES[d.getMonth()] + " " + d.getFullYear();
 }
@@ -532,7 +698,7 @@ async function registrar() {
     profitLibre: profitLibre,
     profitSinEmpleado: profitSinEmpleado,
     postres: postres.slice(),
-    vendidos: vendidos.slice()
+    vendidos: vendidos.slice(0, N)            // columnas de la hoja (las fresas van en el total)
   };
 
   try {
@@ -561,6 +727,755 @@ function fila(etiqueta, valor, y) {
   textAlign(RIGHT, CENTER);
   text(valor, 635, y);
   textAlign(LEFT, CENTER);
+}
+
+// ============================================================
+// PUNTO DE VENTA - DATOS
+// ============================================================
+
+function diaOperativo() { return isoFecha(fechaPorDefecto()); }
+
+function cargarPV() {
+  try {
+    const s = JSON.parse(localStorage.getItem(PV_KEY) || "null");
+    if (s && s.fecha) {
+      pv = Object.assign({ ordenes: [], siguiente: 1, carrito: [], anterior: null }, s);
+    }
+  } catch (e) {}
+  asegurarDia();
+}
+
+function guardarPV() {
+  try { localStorage.setItem(PV_KEY, JSON.stringify(pv)); } catch (e) {}
+}
+
+// Al empezar un dia nuevo (despues de las 5 am) se empieza de cero.
+// Las ordenes del dia anterior se guardan por si no alcanzaste a cerrar.
+function asegurarDia() {
+  const hoy = diaOperativo();
+  if (pv.fecha === hoy) return;
+  const anterior = pv.ordenes && pv.ordenes.length
+    ? { fecha: pv.fecha, ordenes: pv.ordenes }
+    : pv.anterior;
+  pv = { fecha: hoy, ordenes: [], siguiente: 1, carrito: [], anterior: anterior || null };
+  guardarPV();
+}
+
+function cargoToppings(it) {
+  if (it.premium.length)  return PRECIO_PREMIUM;
+  if (it.clasicos.length) return PRECIO_CLASICOS;
+  return 0;
+}
+
+function precioItem(it) {
+  if (it.prod === "fresas") return FRESAS[it.tam].precio + cargoToppings(it);
+  return precios[it.prod];
+}
+
+function costoItem(it) {
+  if (it.prod !== "fresas") return costos[it.prod];
+  let c = FRESAS[it.tam].costo;
+  for (const i of it.premium)  c += TOP_PREMIUM[i].costo;
+  for (const i of it.clasicos) c += TOP_CLASICOS[i].costo;
+  return c;
+}
+
+function nombreItem(it) {
+  return it.prod === "fresas" ? FRESAS[it.tam].nombre : postres[it.prod];
+}
+
+function nombresTop(lista, idxs) {
+  return idxs.map(i => lista[i].nombre).join(", ");
+}
+
+// Una linea corta para el carrito
+function resumenToppings(it) {
+  const todos = it.premium.map(i => TOP_PREMIUM[i].nombre)
+                 .concat(it.clasicos.map(i => TOP_CLASICOS[i].nombre));
+  if (!todos.length) return "Sin toppings";
+  return "+$" + cargoToppings(it) + " · " + todos.join(", ");
+}
+
+// Detalle completo para la orden final
+function detallesItem(it) {
+  const out = [];
+  if (it.premium.length)
+    out.push("Premium: " + nombresTop(TOP_PREMIUM, it.premium) + "  +$" + PRECIO_PREMIUM);
+  if (it.clasicos.length)
+    out.push("Clásicos: " + nombresTop(TOP_CLASICOS, it.clasicos) +
+             (it.premium.length ? "  (incluidos)" : "  +$" + PRECIO_CLASICOS));
+  if (!out.length) out.push("Sin toppings");
+  return out;
+}
+
+// Junta los postres iguales ("2 × Flan"); cada fresa va en su propia linea
+function agruparItems(items) {
+  const lineas = [];
+  const porPostre = {};
+  items.forEach((it, k) => {
+    if (it.prod === "fresas") {
+      lineas.push({ fresas: true, item: it, ref: k, cant: 1, total: precioItem(it) });
+    } else if (porPostre[it.prod]) {
+      porPostre[it.prod].cant++;
+      porPostre[it.prod].total += precioItem(it);
+    } else {
+      const l = { fresas: false, prod: it.prod, item: it, cant: 1, total: precioItem(it) };
+      porPostre[it.prod] = l;
+      lineas.push(l);
+    }
+  });
+  return lineas;
+}
+
+function totalItems(items) {
+  let t = 0;
+  for (const it of items) t += precioItem(it);
+  return t;
+}
+
+function totalesPV() {
+  asegurarDia();
+  let venta = 0;
+  for (const o of pv.ordenes) venta += o.total;
+  return { venta: venta, comision: venta * COMISION_EMPLEADO, ordenes: pv.ordenes.length };
+}
+
+function cuentaEnCarrito(i) {
+  let n = 0;
+  for (const it of pv.carrito) {
+    if (i === N ? it.prod === "fresas" : it.prod === i) n++;
+  }
+  return n;
+}
+
+function horaTexto(d) {
+  let h = d.getHours();
+  const m = String(d.getMinutes()).padStart(2, "0");
+  const ampm = h >= 12 ? "pm" : "am";
+  h = h % 12; if (h === 0) h = 12;
+  return h + ":" + m + " " + ampm;
+}
+
+// ============================================================
+// BARRA DE COMISION (visible en inicio, conteo, punto de venta y orden)
+// ============================================================
+
+function dibujarBarraComision() {
+  const t = totalesPV();
+  const x = 30, y = BARRA_Y, w = 640, h = 96;
+
+  noStroke();
+  fill(0, 18);
+  rect(x, y + 5, w, h, 24);
+  fill('#252925');
+  rect(x, y, w, h, 24);
+
+  textAlign(LEFT, CENTER);
+  fill(255, 150);
+  textSize(16);
+  text("VENDIDO HOY · " + t.ordenes + (t.ordenes === 1 ? " ORDEN" : " ÓRDENES"), x + 28, y + 30);
+  fill(blanco);
+  textStyle(BOLD);
+  textSize(31);
+  text("$" + formato(t.venta), x + 28, y + 64);
+  textStyle(NORMAL);
+
+  textAlign(RIGHT, CENTER);
+  fill(255, 150);
+  textSize(16);
+  text("TU COMISIÓN 18%", x + w - 28, y + 30);
+  fill('#8FD4A8');
+  textStyle(BOLD);
+  textSize(31);
+  text("$" + formato(t.comision), x + w - 28, y + 64);
+  textStyle(NORMAL);
+  textAlign(LEFT, CENTER);
+}
+
+// ============================================================
+// PANTALLA 3 - PUNTO DE VENTA
+// ============================================================
+
+function pantallaPV() {
+
+  botonAtras.display();
+
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textSize(44);
+  text("Punto de Venta", 158, 80);
+
+  fill(textoSecundario);
+  textSize(21);
+  text("Toca un postre para agregarlo a la orden", 160, 128);
+
+  for (let i = 0; i <= N; i++) dibujarTile(i);
+
+  dibujarCarrito();
+
+  // Boton ORDENAR
+  const b = PV_ORDENAR;
+  const total = totalItems(pv.carrito);
+  const activo = pv.carrito.length > 0;
+  noStroke();
+  if (activo) { fill(0, 22); rect(b.x, b.y + 6, b.w, b.h, 24); }
+  fill(activo ? (enRect(mouseX, mouseY - OFFSET_Y, b) ? rojoHover : rojo) : color('#D9DCD9'));
+  rect(b.x, b.y, b.w, b.h, 24);
+  fill(activo ? blanco : color('#A5AAA5'));
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  textSize(32);
+  text(activo ? "ORDENAR  ·  $" + formato(total) : "ORDENAR", b.x + b.w / 2, b.y + b.h / 2);
+  textStyle(NORMAL);
+  textAlign(LEFT, CENTER);
+
+  dibujarBarraComision();
+}
+
+function dibujarTile(i) {
+  const t = tiles[i];
+  const esFresas = i === N;
+  const bg  = esFresas ? rojo   : color(COLORES_PV[i][0]);
+  const acc = esFresas ? blanco : color(COLORES_PV[i][1]);
+
+  noStroke();
+  fill(0, 16);
+  rect(t.x, t.y + 5, t.w, t.h, 24);
+  fill(bg);
+  rect(t.x, t.y, t.w, t.h, 24);
+
+  // Rayita de color
+  fill(acc);
+  rect(t.x + 20, t.y + 22, 34, 8, 4);
+
+  // Nombre
+  const lineas = esFresas ? ["Fresas", "con Crema"] : NOMBRES_TILE[i];
+  textAlign(LEFT, CENTER);
+  textStyle(BOLD);
+  textSize(24);
+  const y0 = lineas.length === 1 ? t.y + 70 : t.y + 58;
+  for (let k = 0; k < lineas.length; k++) text(lineas[k], t.x + 20, y0 + k * 29);
+  textStyle(NORMAL);
+
+  // Precio
+  fill(esFresas ? color(255, 220) : acc);
+  textSize(21);
+  text(esFresas ? "desde $70" : "$" + precios[i], t.x + 20, t.y + t.h - 26);
+
+  // Cuantos van en esta orden
+  const n = cuentaEnCarrito(i);
+  if (n > 0) {
+    fill(esFresas ? blanco : acc);
+    ellipse(t.x + t.w - 32, t.y + 32, 44, 44);
+    fill(esFresas ? rojo : bg);
+    textAlign(CENTER, CENTER);
+    textStyle(BOLD);
+    textSize(22);
+    text(n, t.x + t.w - 32, t.y + 33);
+    textStyle(NORMAL);
+    textAlign(LEFT, CENTER);
+  }
+
+  // Destello al tocar
+  const dt = millis() - destello[i];
+  if (dt < 260) {
+    fill(255, 150 * (1 - dt / 260));
+    rect(t.x, t.y, t.w, t.h, 24);
+  }
+}
+
+// Lineas visibles del carrito con su posicion
+function lineasCarrito() {
+  const lineas = agruparItems(pv.carrito);
+  const visibles = lineas.slice(0, PV_MAX_LINEAS);
+  visibles.forEach((l, k) => {
+    l.y = PV_LINEA_Y0 + k * PV_LINEA_H;
+    l.menos = { x: 590, y: l.y - 4, w: 60, h: 60 };
+  });
+  return { visibles: visibles, ocultas: lineas.length - visibles.length };
+}
+
+function dibujarCarrito() {
+  const y = PV_CARRITO_Y;
+  noStroke();
+  fill(blanco);
+  rect(30, y, 640, PV_CARRITO_H, 26);
+
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textSize(28);
+  text("Orden actual", 60, y + 40);
+
+  if (pv.carrito.length === 0) {
+    fill(color('#A5AAA5'));
+    textAlign(CENTER, CENTER);
+    textSize(22);
+    text("Toca un postre para empezar", 350, y + PV_CARRITO_H / 2);
+    textAlign(LEFT, CENTER);
+    return;
+  }
+
+  // Vaciar (doble toque)
+  const v = PV_VACIAR;
+  const confirmando = millis() - confirmarVaciar < TIEMPO_CONFIRMAR;
+  fill(confirmando ? rojo : color('#F7F0F2'));
+  rect(v.x, v.y, v.w, v.h, 16);
+  fill(confirmando ? blanco : rojo);
+  textAlign(CENTER, CENTER);
+  textSize(19);
+  text(confirmando ? "¿Vaciar?" : "Vaciar", v.x + v.w / 2, v.y + v.h / 2);
+  textAlign(LEFT, CENTER);
+
+  stroke(borde);
+  strokeWeight(2);
+  line(60, y + 78, 640, y + 78);
+  noStroke();
+
+  const { visibles, ocultas } = lineasCarrito();
+  for (const l of visibles) {
+    const color2 = l.fresas ? rojo : color(COLORES_PV[l.prod][1]);
+
+    // Puntito del color del postre
+    fill(color2);
+    ellipse(70, l.y + 26, 16, 16);
+
+    fill(texto);
+    textSize(24);
+    textAlign(LEFT, CENTER);
+    const nombre = (l.cant > 1 ? l.cant + " × " : "") + nombreItem(l.item);
+    text(nombre, 90, l.y + (l.fresas ? 14 : 26));
+
+    if (l.fresas) {
+      fill(textoSecundario);
+      textSize(17);
+      text(recortar(resumenToppings(l.item), 380), 90, l.y + 44);
+    }
+
+    fill(texto);
+    textSize(24);
+    textAlign(RIGHT, CENTER);
+    text("$" + formato(l.total), 572, l.y + 26);
+
+    // Boton quitar
+    const m = l.menos;
+    fill('#F2F4F2');
+    ellipse(m.x + m.w / 2, m.y + m.h / 2, 50, 50);
+    fill(textoSecundario);
+    textAlign(CENTER, CENTER);
+    textSize(32);
+    text("−", m.x + m.w / 2, m.y + m.h / 2 - 2);
+    textAlign(LEFT, CENTER);
+  }
+
+  if (ocultas > 0) {
+    fill(textoSecundario);
+    textSize(19);
+    text("+ " + ocultas + " más en la orden", 90, PV_LINEA_Y0 + PV_MAX_LINEAS * PV_LINEA_H - 8);
+  }
+
+  // Total
+  stroke(borde);
+  strokeWeight(2);
+  line(60, y + PV_CARRITO_H - 78, 640, y + PV_CARRITO_H - 78);
+  noStroke();
+  fill(textoSecundario);
+  textSize(20);
+  text(pv.carrito.length + (pv.carrito.length === 1 ? " postre" : " postres"), 60, y + PV_CARRITO_H - 38);
+  fill(texto);
+  textAlign(RIGHT, CENTER);
+  textStyle(BOLD);
+  textSize(32);
+  text("$" + formato(totalItems(pv.carrito)), 640, y + PV_CARRITO_H - 38);
+  textStyle(NORMAL);
+  textAlign(LEFT, CENTER);
+}
+
+function pressPV(mx, my) {
+
+  if (botonAtras.isOver(mx, my)) { irAInicio(); return; }
+
+  for (let i = 0; i <= N; i++) {
+    if (enRect(mx, my, tiles[i])) {
+      if (i === N) {
+        modalFresas = { tam: "chicas", premium: [], clasicos: [] };
+      } else {
+        pv.carrito.push({ prod: i });
+        guardarPV();
+        destello[i] = millis();
+      }
+      confirmarVaciar = SIN_CONFIRMAR;
+      return;
+    }
+  }
+
+  if (pv.carrito.length && enRect(mx, my, PV_VACIAR)) {
+    if (millis() - confirmarVaciar < TIEMPO_CONFIRMAR) {
+      pv.carrito = [];
+      guardarPV();
+      confirmarVaciar = SIN_CONFIRMAR;
+    } else {
+      confirmarVaciar = millis();
+    }
+    return;
+  }
+
+  const { visibles } = lineasCarrito();
+  for (const l of visibles) {
+    if (enRect(mx, my, l.menos)) {
+      if (l.fresas) {
+        pv.carrito.splice(l.ref, 1);
+      } else {
+        for (let k = pv.carrito.length - 1; k >= 0; k--) {
+          if (pv.carrito[k].prod === l.prod) { pv.carrito.splice(k, 1); break; }
+        }
+      }
+      guardarPV();
+      return;
+    }
+  }
+
+  if (pv.carrito.length && enRect(mx, my, PV_ORDENAR)) ordenar();
+}
+
+function ordenar() {
+  if (!pv.carrito.length) return;
+  const items = JSON.parse(JSON.stringify(pv.carrito));
+  asegurarDia();
+
+  const total = totalItems(items);
+  let costo = 0;
+  for (const it of items) costo += costoItem(it);
+
+  const orden = {
+    n: pv.siguiente,
+    hora: horaTexto(new Date()),
+    items: items,
+    total: total,
+    costo: costo,
+    comision: total * COMISION_EMPLEADO
+  };
+  pv.siguiente++;
+  pv.ordenes.push(orden);
+  pv.carrito = [];
+  guardarPV();
+
+  ultimaOrden = orden;
+  confirmarCancelar = SIN_CONFIRMAR;
+  pantalla = 4;
+}
+
+// ============================================================
+// VENTANA DE FRESAS (tamaño + toppings)
+// ============================================================
+
+function chipsPremium() {
+  return TOP_PREMIUM.map((t, i) => ({ x: [50, 360][i % 2], y: [843, 929][Math.floor(i / 2)], w: 290, h: 74 }));
+}
+function chipsClasicos() {
+  return TOP_CLASICOS.map((t, i) => ({ x: [50, 254, 458][i % 3], y: [1068, 1154][Math.floor(i / 3)], w: 192, h: 74 }));
+}
+
+function dibujarModalFresas() {
+  const m = modalFresas;
+
+  noStroke();
+  fill(0, 115);
+  rect(0, -OFFSET_Y, BASE_W, MF_Y + OFFSET_Y);
+  fill(blanco);
+  rect(-20, MF_Y, BASE_W + 40, BASE_H, 30);
+
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textStyle(BOLD);
+  textSize(34);
+  text("Fresas con Crema", 50, 582);
+  textStyle(NORMAL);
+
+  // Cerrar
+  const c = MF_CERRAR;
+  fill('#F2F4F2');
+  rect(c.x, c.y, c.w, c.h, 18);
+  fill(textoSecundario);
+  textAlign(CENTER, CENTER);
+  textSize(34);
+  text("×", c.x + c.w / 2, c.y + c.h / 2);
+  textAlign(LEFT, CENTER);
+
+  // Tamaño
+  fill(textoSecundario);
+  textSize(18);
+  text("TAMAÑO", 50, 645);
+  for (const k of ["chicas", "grandes"]) {
+    const b = MF_TAM[k];
+    const sel = m.tam === k;
+    if (sel) { fill(rojo); noStroke(); }
+    else     { fill('#F7F8F7'); stroke(borde); strokeWeight(2); }
+    rect(b.x, b.y, b.w, b.h, 20);
+    noStroke();
+    fill(sel ? blanco : texto);
+    textAlign(CENTER, CENTER);
+    textStyle(BOLD);
+    textSize(28);
+    text(FRESAS[k].corto, b.x + b.w / 2, b.y + 40);
+    textStyle(NORMAL);
+    fill(sel ? color(255, 220) : textoSecundario);
+    textSize(22);
+    text("$" + FRESAS[k].precio, b.x + b.w / 2, b.y + 78);
+  }
+  textAlign(LEFT, CENTER);
+
+  // Premium
+  encabezadoToppings("PREMIUM", "+$" + PRECIO_PREMIUM + " · máximo " + MAX_PREMIUM,
+                     m.premium.length, MAX_PREMIUM, 815);
+  chipsPremium().forEach((b, i) =>
+    dibujarChip(b, TOP_PREMIUM[i].nombre, m.premium.includes(i),
+                m.premium.length >= MAX_PREMIUM, rojo));
+
+  // Clasicos
+  const textoClasicos = m.premium.length
+    ? "incluidos con premium · máximo " + MAX_CLASICOS
+    : "+$" + PRECIO_CLASICOS + " · máximo " + MAX_CLASICOS;
+  encabezadoToppings("CLÁSICOS", textoClasicos, m.clasicos.length, MAX_CLASICOS, 1040);
+  chipsClasicos().forEach((b, i) =>
+    dibujarChip(b, TOP_CLASICOS[i].nombre, m.clasicos.includes(i),
+                m.clasicos.length >= MAX_CLASICOS, verde));
+
+  // Cuanto se cobra
+  const item = { prod: "fresas", tam: m.tam, premium: m.premium, clasicos: m.clasicos };
+  fill(textoSecundario);
+  textSize(21);
+  textAlign(LEFT, CENTER);
+  text(FRESAS[m.tam].nombre + " $" + FRESAS[m.tam].precio, 50, 1275);
+  textAlign(RIGHT, CENTER);
+  text("Toppings +$" + cargoToppings(item), 650, 1275);
+  textAlign(LEFT, CENTER);
+
+  // Agregar
+  const a = MF_AGREGAR;
+  fill(0, 22);
+  rect(a.x, a.y + 6, a.w, a.h, 24);
+  fill(enRect(mouseX, mouseY - OFFSET_Y, a) ? rojoHover : rojo);
+  rect(a.x, a.y, a.w, a.h, 24);
+  fill(blanco);
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  textSize(30);
+  text("AGREGAR  ·  $" + formato(precioItem(item)), a.x + a.w / 2, a.y + a.h / 2);
+  textStyle(NORMAL);
+  textAlign(LEFT, CENTER);
+}
+
+function encabezadoToppings(titulo, sub, llevan, max, y) {
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textStyle(BOLD);
+  textSize(21);
+  text(titulo, 50, y);
+  const w = textWidth(titulo);
+  textStyle(NORMAL);
+  fill(textoSecundario);
+  textSize(18);
+  text("  " + sub, 50 + w, y);
+  fill(llevan >= max ? rojo : textoSecundario);
+  textAlign(RIGHT, CENTER);
+  textSize(20);
+  text(llevan + " / " + max, 650, y);
+  textAlign(LEFT, CENTER);
+}
+
+function dibujarChip(b, nombre, sel, lleno, colorSel) {
+  const bloqueado = !sel && lleno;
+  if (sel)            { fill(colorSel); noStroke(); }
+  else if (bloqueado) { fill('#F4F4F4'); noStroke(); }
+  else                { fill('#F7F8F7'); stroke(borde); strokeWeight(2); }
+  rect(b.x, b.y, b.w, b.h, 18);
+  noStroke();
+  fill(sel ? blanco : (bloqueado ? color('#C2C6C2') : texto));
+  textAlign(CENTER, CENTER);
+  textSize(b.w > 250 ? 23 : 20);
+  text((sel ? "✓ " : "") + nombre, b.x + b.w / 2, b.y + b.h / 2);
+  textAlign(LEFT, CENTER);
+}
+
+function pressModalFresas(mx, my) {
+  const m = modalFresas;
+
+  if (my < MF_Y || enRect(mx, my, MF_CERRAR)) { modalFresas = null; return; }
+
+  for (const k of ["chicas", "grandes"]) {
+    if (enRect(mx, my, MF_TAM[k])) { m.tam = k; return; }
+  }
+
+  const prem = chipsPremium();
+  for (let i = 0; i < prem.length; i++) {
+    if (enRect(mx, my, prem[i])) { alternarTopping(m.premium, i, MAX_PREMIUM); return; }
+  }
+  const clas = chipsClasicos();
+  for (let i = 0; i < clas.length; i++) {
+    if (enRect(mx, my, clas[i])) { alternarTopping(m.clasicos, i, MAX_CLASICOS); return; }
+  }
+
+  if (enRect(mx, my, MF_AGREGAR)) {
+    pv.carrito.push({
+      prod: "fresas",
+      tam: m.tam,
+      premium: m.premium.slice().sort((a, b) => a - b),
+      clasicos: m.clasicos.slice().sort((a, b) => a - b)
+    });
+    guardarPV();
+    destello[N] = millis();
+    modalFresas = null;
+  }
+}
+
+function alternarTopping(lista, i, max) {
+  const k = lista.indexOf(i);
+  if (k >= 0) lista.splice(k, 1);
+  else if (lista.length < max) lista.push(i);
+}
+
+// ============================================================
+// PANTALLA 4 - ORDEN FINAL
+// ============================================================
+
+function pantallaOrden() {
+  const o = ultimaOrden;
+  if (!o) { pantalla = 3; return; }
+
+  botonAtras.display();
+
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textSize(44);
+  text("Orden #" + o.n, 158, 80);
+  fill(textoSecundario);
+  textSize(21);
+  text("Registrada a las " + o.hora, 160, 128);
+
+  // Cancelar orden (doble toque)
+  const c = OF_CANCELAR;
+  const confirmando = millis() - confirmarCancelar < TIEMPO_CONFIRMAR;
+  noStroke();
+  fill(confirmando ? rojo : blanco);
+  rect(c.x, c.y, c.w, c.h, 20);
+  fill(confirmando ? blanco : rojo);
+  textAlign(CENTER, CENTER);
+  textSize(20);
+  text(confirmando ? "¿Cancelar?" : "Cancelar orden", c.x + c.w / 2, c.y + c.h / 2);
+  textAlign(LEFT, CENTER);
+
+  // ---------- Detalle ----------
+  const top = 165, limite = 1150;
+  const lineas = agruparItems(o.items);
+
+  // Primero se calcula el alto para dibujar la tarjeta
+  textSize(19);
+  let filas = [];
+  let y = top + 100;
+  let ocultas = 0;
+  for (const l of lineas) {
+    const det = [];
+    if (l.fresas) for (const d of detallesItem(l.item)) det.push(...partirTexto(d, 520));
+    else if (l.cant > 1) det.push("$" + formato(precioItem(l.item)) + " c/u");
+    const alto = 50 + det.length * 30 + 12;
+    if (y + alto > limite) { ocultas++; continue; }
+    filas.push({ l: l, det: det, y: y });
+    y += alto;
+  }
+  const fondoTarjeta = y + (ocultas ? 40 : 0) + 110;
+
+  fill(blanco);
+  rect(30, top, 640, fondoTarjeta - top, 26);
+
+  fill(textoSecundario);
+  textSize(19);
+  text("DETALLE DE LA ORDEN", 65, top + 45);
+
+  for (const f of filas) {
+    const l = f.l;
+    const col = l.fresas ? rojo : color(COLORES_PV[l.prod][1]);
+    fill(col);
+    ellipse(73, f.y + 24, 16, 16);
+
+    fill(texto);
+    textSize(27);
+    textAlign(LEFT, CENTER);
+    text((l.cant > 1 ? l.cant + " × " : "") + nombreItem(l.item), 95, f.y + 24);
+    textAlign(RIGHT, CENTER);
+    text("$" + formato(l.total), 635, f.y + 24);
+    textAlign(LEFT, CENTER);
+
+    fill(textoSecundario);
+    textSize(19);
+    f.det.forEach((d, k) => text(d, 95, f.y + 62 + k * 30));
+  }
+  if (ocultas) {
+    fill(textoSecundario);
+    textSize(19);
+    text("+ " + ocultas + " líneas más", 95, y + 10);
+  }
+
+  stroke(borde);
+  strokeWeight(2);
+  line(65, fondoTarjeta - 95, 635, fondoTarjeta - 95);
+  noStroke();
+
+  fill(texto);
+  textSize(24);
+  text("TOTAL", 65, fondoTarjeta - 50);
+  textAlign(RIGHT, CENTER);
+  textStyle(BOLD);
+  textSize(40);
+  text("$" + formato(o.total), 635, fondoTarjeta - 50);
+  textStyle(NORMAL);
+  textAlign(LEFT, CENTER);
+
+  // ---------- Comision de esta orden ----------
+  const cy = fondoTarjeta + 22;
+  fill(verde);
+  rect(30, cy, 640, 122, 26);
+  fill(255, 210);
+  textSize(20);
+  text("TU COMISIÓN (18%) DE ESTA ORDEN", 65, cy + 38);
+  fill(blanco);
+  textStyle(BOLD);
+  textSize(42);
+  text("$" + formato(o.comision), 65, cy + 85);
+  textStyle(NORMAL);
+
+  // ---------- Nueva orden ----------
+  ofNueva = { x: 30, y: Math.min(cy + 150, BARRA_Y - 135), w: 640, h: 110 };
+  const b = ofNueva;
+  fill(0, 22);
+  rect(b.x, b.y + 6, b.w, b.h, 24);
+  fill(enRect(mouseX, mouseY - OFFSET_Y, b) ? rojoHover : rojo);
+  rect(b.x, b.y, b.w, b.h, 24);
+  fill(blanco);
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  textSize(32);
+  text("NUEVA ORDEN", b.x + b.w / 2, b.y + b.h / 2);
+  textStyle(NORMAL);
+  textAlign(LEFT, CENTER);
+
+  dibujarBarraComision();
+}
+
+function pressOrden(mx, my) {
+  if (botonAtras.isOver(mx, my) || enRect(mx, my, ofNueva)) { irAPV(); return; }
+
+  if (enRect(mx, my, OF_CANCELAR)) {
+    if (millis() - confirmarCancelar < TIEMPO_CONFIRMAR) {
+      const n = ultimaOrden.n;
+      pv.ordenes = pv.ordenes.filter(o => o.n !== n);
+      guardarPV();
+      ultimaOrden = null;
+      confirmarCancelar = SIN_CONFIRMAR;
+      irAPV();
+    } else {
+      confirmarCancelar = millis();
+    }
+  }
 }
 
 // ============================================================
@@ -704,14 +1619,20 @@ function leer(caja) {
   return v;
 }
 
-function calcularResultados() {
-
+function reiniciarResultados() {
+  vendidos = new Array(N + 1).fill(0);
   totalPostres = 0;
   ventaTotal = 0;
   costoProduccion = 0;
   comisionEmpleado = 0;
   cantidadMayor = 0;
   postreMasVendido = "-";
+}
+
+// Resumen a partir del conteo (inventario - lo que quedo)
+function calcularResultados() {
+
+  reiniciarResultados();
 
   for (let i = 0; i < N; i++) {
 
@@ -727,10 +1648,46 @@ function calcularResultados() {
     totalPostres    += v;
     ventaTotal      += v * precios[i];
     costoProduccion += v * costos[i];
+  }
 
-    if (v > cantidadMayor) {
-      cantidadMayor = v;
-      postreMasVendido = postres[i];
+  subtituloResumen = "Conteo, venta y ganancia";
+  terminarCalculo(1);
+  fechaRegistro = fechaPorDefecto();
+}
+
+// Resumen a partir de las ordenes del Punto de Venta
+function calcularDesdePV() {
+
+  asegurarDia();
+  reiniciarResultados();
+
+  // Si hoy no hay ventas pero quedaron las de ayer sin cerrar, se usan esas
+  let fuente = pv;
+  if (!pv.ordenes.length && pv.anterior && pv.anterior.ordenes.length) fuente = pv.anterior;
+
+  for (const o of fuente.ordenes) {
+    for (const it of o.items) {
+      const idx = it.prod === "fresas" ? N : it.prod;
+      vendidos[idx]++;
+      totalPostres++;
+      ventaTotal      += precioItem(it);
+      costoProduccion += costoItem(it);
+    }
+  }
+
+  const fecha = fechaDesdeIso(fuente.fecha);
+  subtituloResumen = "Punto de Venta · " + fuente.ordenes.length +
+                     (fuente.ordenes.length === 1 ? " orden · " : " órdenes · ") + textoFecha(fecha);
+  terminarCalculo(3);
+  fechaRegistro = fecha;
+}
+
+function terminarCalculo(origen) {
+
+  for (let i = 0; i <= N; i++) {
+    if (vendidos[i] > cantidadMayor) {
+      cantidadMayor = vendidos[i];
+      postreMasVendido = NOMBRES_RESUMEN[i];
     }
   }
 
@@ -745,7 +1702,7 @@ function calcularResultados() {
 
   // Cada calculo nuevo se puede volver a registrar
   estadoRegistro = "listo";
-  fechaRegistro = fechaPorDefecto();
+  origenResumen = origen;
 
   pantalla = 2;
   cerrarTeclado();
@@ -760,8 +1717,9 @@ function cerrarTeclado() {
   activeBoxIndex = -1;
 }
 
-function irAInicio()  { pantalla = 0; cerrarTeclado(); }
-function irACaptura() { pantalla = 1; cerrarTeclado(); }
+function irAInicio()  { pantalla = 0; cerrarTeclado(); modalFresas = null; }
+function irACaptura() { pantalla = 1; cerrarTeclado(); confirmarBorrar = SIN_CONFIRMAR; }
+function irAPV()      { asegurarDia(); pantalla = 3; modalFresas = null; confirmarVaciar = SIN_CONFIRMAR; }
 
 // ============================================================
 // MOUSE / TOUCH
@@ -785,22 +1743,37 @@ function handlePress(mxRaw, myRaw) {
 
   if (pantalla === 0) {
 
-    if (botonInicio.isOver(mx, my)) irACaptura();
+    if (botonInicio.isOver(mx, my))          irACaptura();
+    else if (botonPV.isOver(mx, my))         irAPV();
+    else if (botonCierrePV.isOver(mx, my))   calcularDesdePV();
 
   } else if (pantalla === 1) {
 
     if (botonAtras.isOver(mx, my)) { irAInicio(); return; }
+    if (enRect(mx, my, botonBorrar)) { pressBorrarTodo(); return; }
 
     for (const c of cajas) c.pressedAt(mx, my);
 
     if (botonCalcular.isOver(mx, my)) calcularResultados();
 
-  } else {
+  } else if (pantalla === 2) {
 
-    if (botonAtras.isOver(mx, my))      { irACaptura();    return; }
+    if (botonAtras.isOver(mx, my)) {
+      if (origenResumen === 3) irAPV(); else irACaptura();
+      return;
+    }
     if (botonRegistrar.isOver(mx, my))  { registrar();     return; }
     if (botonDiaAntes.isOver(mx, my))   { moverFecha(-1);  return; }
     if (botonDiaDespues.isOver(mx, my)) { moverFecha(1);   return; }
+
+  } else if (pantalla === 3) {
+
+    if (modalFresas) pressModalFresas(mx, my);
+    else             pressPV(mx, my);
+
+  } else {
+
+    pressOrden(mx, my);
   }
 }
 
@@ -834,6 +1807,27 @@ function keyPressed() {
 // ============================================================
 
 function formato(numero) { return nf(numero, 0, 2); }
+
+// Recorta un texto para que quepa en un ancho (usa el textSize actual)
+function recortar(s, maxW) {
+  if (textWidth(s) <= maxW) return s;
+  while (s.length > 1 && textWidth(s + "…") > maxW) s = s.slice(0, -1);
+  return s + "…";
+}
+
+// Parte un texto en renglones que quepan en un ancho (usa el textSize actual)
+function partirTexto(s, maxW) {
+  const palabras = s.split(" ");
+  const out = [];
+  let actual = "";
+  for (const p of palabras) {
+    const prueba = actual ? actual + " " + p : p;
+    if (textWidth(prueba) > maxW && actual) { out.push(actual); actual = p; }
+    else actual = prueba;
+  }
+  if (actual) out.push(actual);
+  return out;
+}
 
 // ============================================================
 // TEXTBOX
@@ -927,10 +1921,12 @@ class Button {
 
 class BigButton {
 
-  constructor(x, y, w, h, label, sublabel) {
+  constructor(x, y, w, h, label, sublabel, base, hover) {
     this.x = x; this.y = y; this.w = w; this.h = h;
     this.label = label;
     this.sublabel = sublabel;
+    this.base = base;
+    this.hover = hover;
   }
 
   display() {
@@ -940,7 +1936,7 @@ class BigButton {
     fill(0, 22);
     rect(this.x, this.y + 7, this.w, this.h, 28);
 
-    fill(hover ? verdeHover : verde);
+    fill(hover ? this.hover : this.base);
     rect(this.x, this.y, this.w, this.h, 28);
 
     fill(255, 150);

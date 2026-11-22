@@ -328,15 +328,15 @@ function setup() {
     cajas.push(new TextBox(515, y, 140, 78, i, "uni"));
   }
 
-  botonInicio = new BigButton(50, 284, 600, 150,
+  botonInicio = new BigButton(50, 208, 600, 150,
     "Conteo Postres", "Solo dueño · inventario y ganancia", verde, verdeHover);
-  botonPV = new BigButton(50, 450, 600, 150,
+  botonPV = new BigButton(50, 374, 600, 150,
     "Punto de Venta", "Registra cada orden del día", rojo, rojoHover);
-  botonEst = new BigButton(50, 616, 600, 150,
+  botonEst = new BigButton(50, 540, 600, 150,
     "Estadísticas", "Solo dueño · gráficas de lo vendido", color(AZUL), color(AZUL_HOVER));
-  botonRec = new BigButton(50, 782, 600, 150,
+  botonRec = new BigButton(50, 706, 600, 150,
     "Recetas", "Solo dueño · ingredientes y costos", color(AMARILLO), color(AMARILLO_HOVER), color(TEXTO_AMARILLO));
-  botonCierrePV = { x: 50, y: 950, w: 600, h: 124,
+  botonCierrePV = { x: 50, y: 874, w: 600, h: 124,
     isOver(mx, my) { return enRect(mx, my, this); } };
 
   botonCalcular = new Button(60, 1428, 580, 100, "CALCULAR", 31);
@@ -505,18 +505,9 @@ function pantallaInicio() {
   // Isotipo de BON BON (imagen dentro del HTML)
   const iso = document.getElementById("isotipo");
   if (iso && iso.complete && iso.naturalWidth) {
-    const h = 104, w = h * iso.naturalWidth / iso.naturalHeight;
-    drawingContext.drawImage(iso, 350 - w / 2, 22, w, h);
+    const h = 130, w = h * iso.naturalWidth / iso.naturalHeight;
+    drawingContext.drawImage(iso, 350 - w / 2, 30, w, h);
   }
-
-  fill(texto);
-  textAlign(CENTER, CENTER);
-  textSize(62);
-  text("Control de Ventas", 350, 180);
-
-  fill(textoSecundario);
-  textSize(28);
-  text("Cierre del día", 350, 236);
 
   textAlign(LEFT, CENTER);
   botonInicio.display();
@@ -547,10 +538,10 @@ function pantallaInicio() {
   fill(textoSecundario);
   textAlign(CENTER, CENTER);
   textSize(23);
-  text("Costos al día con tu hoja Recetas", 350, 1115);
+  text("Costos al día con tu hoja Recetas", 350, 1040);
   textAlign(LEFT, CENTER);
 
-  altoContenido = 1150;
+  altoContenido = 1075;
 }
 
 // ============================================================
@@ -1973,7 +1964,8 @@ function dibujarIconoReloj(cx, cy, col) {
 function pantallaHistorial() {
   botonAtras.display();
 
-  const ordenes = pv.ordenes.slice().reverse();     // la mas nueva primero
+  // Solo las ordenes despues del ultimo reinicio (↺), la mas nueva primero
+  const ordenes = pv.ordenes.filter(o => o.n > (pv.corte || 0)).reverse();
   let venta = 0;
   for (const o of ordenes) venta += o.total;
 
@@ -1983,7 +1975,7 @@ function pantallaHistorial() {
   text("Historial de hoy", 158, 80);
   fill(textoSecundario);
   textSize(24);
-  text(textoFecha(fechaDesdeIso(pv.fecha)), 160, 128);
+  text(textoFecha(fechaDesdeIso(pv.fecha)) + (pv.corte ? " · desde el reinicio" : ""), 160, 128);
 
   // Resumen del dia
   noStroke();

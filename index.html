@@ -113,6 +113,7 @@ let destelloRojo = new Array(20).fill(-9999);
 // Azul cielo para Estadisticas; colores de las graficas (revisados para daltonismo y contraste)
 const AZUL = '#3D93CB', AZUL_HOVER = '#55A4D7';
 const GRAF_VENTA = '#2E86C1', GRAF_UTILIDAD = '#3A8F5C', GRAF_REJILLA = '#ECEFEC';
+const GRAF_OPERATIVA = '#6F5BA8';
 
 // ---------- COLORES ----------
 let fondo, blanco, texto, textoSecundario, verde, verdeHover, borde, rojo, rojoHover;
@@ -123,7 +124,7 @@ let fondo, blanco, texto, textoSecundario, verde, verdeHover, borde, rojo, rojoH
 let pantalla = 0;
 
 // ---------- GASTOS FIJOS DEL DIA ----------
-const RENTA = 270;
+const RENTA = 135;
 const LUZ   = 70;
 const GAS   = 14;
 
@@ -257,7 +258,7 @@ let hist = { pagina: 0, zonas: [], botones: {} };
 const HIST_POR_PAGINA = 15;
 
 // Hasta donde llega el contenido de cada ventana de abajo (para pegarla al borde de la pantalla)
-const TEC_FIN = 1555, MF_FIN = 1455, PIN_FIN = 1525;
+const TEC_FIN = 1555, MF_FIN = 1455, PIN_FIN = 1600;
 
 // Medidas de la ventana de fresas
 const MF_Y = 520;
@@ -281,6 +282,7 @@ let pinError = "";
 let pinTeclas = [];
 const PIN_Y = 690;
 const PIN_ENTRAR = { x: 50, y: 1395, w: 600, h: 100 };
+const PIN_FACE   = { x: 50, y: 1512, w: 600, h: 70 };
 
 // ---------- REGISTRO EN GOOGLE SHEETS ----------
 // Pega aqui la URL de tu Apps Script (la que termina en /exec)
@@ -357,6 +359,7 @@ function setup() {
 
   construirTeclado();
   construirTecladoPin();
+  revisarFaceId();
   cargarPV();
   cargarEstadisticasGuardadas();
   cargarRecetasGuardadas();       // costos de la ultima vez
@@ -769,7 +772,7 @@ function pantallaResultados() {
 
   fill(blanco);
   textSize(25);
-  text("PROFIT LIBRE (PAGANDO AL EMPLEADO)", 65, 1364);
+  text("UTILIDAD OPERATIVA (PAGANDO AL EMPLEADO)", 65, 1364);
 
   textSize(42);
   text("$" + formato(profitLibre), 65, 1411);
@@ -780,7 +783,7 @@ function pantallaResultados() {
 
   fill(textoSecundario);
   textSize(25);
-  text("PROFIT LIBRE SI VENDISTE TÚ (SIN EL 18%)", 65, 1499);
+  text("UTILIDAD OPERATIVA SI VENDISTE TÚ", 65, 1499);
 
   fill(profitSinEmpleado < 0 ? rojo : verde);
   textSize(42);
@@ -974,8 +977,9 @@ function guardarPV() {
 function asegurarDia() {
   const hoy = diaOperativo();
   if (pv.fecha === hoy) return;
-  const anterior = pv.ordenes && pv.ordenes.length
-    ? { fecha: pv.fecha, ordenes: pv.ordenes }
+  const quedaron = (pv.ordenes || []).filter(o => o.n > (pv.corte || 0));
+  const anterior = quedaron.length
+    ? { fecha: pv.fecha, ordenes: quedaron }
     : pv.anterior;
   pv = { fecha: hoy, ordenes: [], siguiente: 1, carrito: [], anterior: anterior || null,
          pendientes: pv.pendientes || [], stock: pv.stock || {}, corte: 0 };
@@ -2215,16 +2219,19 @@ function resumenEst() {
   const d = est.datos;
   if (!d) return null;
 
-  let desde = null;
-  if (est.periodo > 0) {
+  // periodo: -1 = ultimo dia de cierre | 7 | 30 | 0 = todo
+  let desde = null, soloDia = null;
+  if (est.periodo === -1) {
+    soloDia = d.dias.reduce((m, x) => (x.f > m ? x.f : m), "");
+  } else if (est.periodo > 0) {
     desde = fechaPorDefecto();
     desde.setDate(desde.getDate() - (est.periodo - 1));
     desde.setHours(0, 0, 0, 0);
   }
-  const dentro = f => !desde || fechaDesdeIso(f) >= desde;
+  const dentro = f => soloDia !== null ? f === soloDia : (!desde || fechaDesdeIso(f) >= desde);
 
   const dias = d.dias.filter(x => dentro(x.f)).sort((a, b) => a.f < b.f ? -1 : 1);
-  const r = { dias: dias, venta: 0, utilidad: 0, postres: 0, mejor: null,
+  const r = { dias: dias, venta: 0, utilidad: 0, operativa: 0, postres: 0, mejor: null, soloDia: soloDia,
               porPostre: new Array(NOMBRES_EST.length).fill(0), horas: {} };
 
   // Por dia de la semana: cuantos dias hubo, venta y unidades de cada postre
@@ -2238,7 +2245,8 @@ function resumenEst() {
     r.sem.u[0][w] += (x.fc || 0) + (x.fg || 0);
     (x.c || []).forEach((n, i) => { r.sem.u[i + 1][w] += n; });
 
-    r.venta += x.v; r.utilidad += x.u; r.postres += x.p;
+    x.o = operativaDia(x);
+    r.venta += x.v; r.utilidad += x.u; r.operativa += x.o; r.postres += x.p;
     if (!r.mejor || x.v > r.mejor.v) r.mejor = x;
     (x.c || []).forEach((n, i) => { r.porPostre[i] += n; });
     r.porPostre[N]     += x.fc || 0;
@@ -2256,7 +2264,7 @@ function resumenEst() {
 
   // Muchos dias: se agrupan por semana para que las barras no queden delgaditas
   r.barras = dias.map(x => ({ etq: String(fechaDesdeIso(x.f).getDate()),
-                              titulo: textoFecha(fechaDesdeIso(x.f)), v: x.v, u: x.u }));
+                              titulo: textoFecha(fechaDesdeIso(x.f)), v: x.v, u: x.u, o: x.o }));
   if (r.barras.length > 31) {
     const semanas = [];
     for (let k = 0; k < dias.length; k += 7) {
@@ -2264,12 +2272,22 @@ function resumenEst() {
       const f0 = fechaDesdeIso(grupo[0].f);
       semanas.push({ etq: f0.getDate() + "/" + (f0.getMonth() + 1),
                      titulo: "Semana del " + textoFecha(f0),
-                     v: grupo.reduce((a, b) => a + b.v, 0), u: grupo.reduce((a, b) => a + b.u, 0) });
+                     v: grupo.reduce((a, b) => a + b.v, 0), u: grupo.reduce((a, b) => a + b.u, 0),
+                     o: grupo.reduce((a, b) => a + b.o, 0) });
     }
     r.barras = semanas;
     r.semanal = true;
   }
   return r;
+}
+
+// Utilidad operativa = utilidad bruta - 18% de la venta (empleado) - renta, luz y gas del dia
+function operativaDia(x) {
+  return x.u - x.v * COMISION_EMPLEADO - (RENTA + LUZ + GAS);
+}
+
+function dineroSigno(n) {
+  return (n < 0 ? "-$" : "$") + miles(Math.abs(n));
 }
 
 function pantallaEstadisticas() {
@@ -2290,10 +2308,10 @@ function pantallaEstadisticas() {
   text(sub, 160, 128);
 
   // ---------- Periodo ----------
-  const opciones = [[7, "7 días"], [30, "30 días"], [0, "Todo"]];
+  const opciones = [[-1, "Día"], [7, "7 días"], [30, "30 días"], [0, "Todo"]];
   estZonas.chips = [];
   opciones.forEach(([val, etq], k) => {
-    const b = { x: 30 + k * 220, y: 162, w: 200, h: 66, val: val };
+    const b = { x: 30 + k * 164, y: 162, w: 148, h: 66, val: val };
     estZonas.chips.push(b);
     const sel = est.periodo === val;
     noStroke();
@@ -2325,25 +2343,41 @@ function pantallaEstadisticas() {
 
   // ---------- Numeros grandes ----------
   const nd = r.dias.length;
-  tarjetaDato(30, 252, "VENTA TOTAL", "$" + miles(r.venta), nd + (nd === 1 ? " día registrado" : " días registrados"));
-  tarjetaDato(360, 252, "UTILIDAD", "$" + miles(r.utilidad),
+  const unDia = r.soloDia !== null;
+  tarjetaDato(30, 252, "VENTA TOTAL", "$" + miles(r.venta),
+              unDia ? "Cierre del " + textoFecha(fechaDesdeIso(r.soloDia))
+                    : nd + (nd === 1 ? " día registrado" : " días registrados"));
+  tarjetaDato(360, 252, "UTILIDAD BRUTA", "$" + miles(r.utilidad),
               r.venta > 0 ? Math.round(r.utilidad / r.venta * 100) + "% de la venta" : "");
-  tarjetaDato(30, 420, "POSTRES VENDIDOS", miles(r.postres), "≈ " + Math.round(r.postres / nd) + " por día");
-  tarjetaDato(360, 420, "PROMEDIO POR DÍA", "$" + miles(r.venta / nd),
-              r.mejor ? "Mejor: " + DIAS[fechaDesdeIso(r.mejor.f).getDay()] + " " +
-                        fechaDesdeIso(r.mejor.f).getDate() + " · $" + miles(r.mejor.v) : "");
+  tarjetaDato(30, 420, "UTILIDAD OPERATIVA", dineroSigno(r.operativa),
+              "bruta − 18% − $" + (RENTA + LUZ + GAS) + "/día", r.operativa < 0 ? rojo : null);
+  tarjetaDato(360, 420, "POSTRES VENDIDOS", miles(r.postres),
+              unDia ? "ese día" : "≈ " + Math.round(r.postres / nd) + " por día");
+  if (!unDia) {
+    tarjetaDato(30, 588, "VENTA PROMEDIO / DÍA", "$" + miles(r.venta / nd),
+                r.mejor ? "Mejor: " + DIAS[fechaDesdeIso(r.mejor.f).getDay()] + " " +
+                          fechaDesdeIso(r.mejor.f).getDate() + " · $" + miles(r.mejor.v) : "");
+    tarjetaDato(360, 588, "OPERATIVA PROMEDIO", dineroSigno(r.operativa / nd), "por día",
+                r.operativa < 0 ? rojo : null);
+  }
 
-  let y = 590;
-  y = graficaVentas(r, y) + 22;
-  y = graficaSemana(r, y, false) + 22;
-  y = graficaSemana(r, y, true) + 22;
+  let y = unDia ? 590 : 758;
+  y = tablaDias(r, y) + 22;
+  if (!unDia) {
+    y = graficaVentas(r, y) + 22;
+    y = graficaOperativa(r, y) + 22;
+    y = graficaSemana(r, y, false) + 22;
+    y = graficaSemana(r, y, true) + 22;
+  } else {
+    estZonas.dias = []; estZonas.sem = []; estZonas.semp = []; estZonas.selector = null;
+  }
   y = graficaPostres(r, y) + 22;
   y = graficaHoras(r, y) + 22;
 
   altoContenido = y + 10;
 }
 
-function tarjetaDato(x, y, etq, valor, sub) {
+function tarjetaDato(x, y, etq, valor, sub, colValor) {
   noStroke();
   fill(blanco);
   rect(x, y, 310, 150, 24);
@@ -2351,7 +2385,7 @@ function tarjetaDato(x, y, etq, valor, sub) {
   textAlign(LEFT, CENTER);
   textSize(20);
   text(etq, x + 26, y + 36);
-  fill(texto);
+  fill(colValor || texto);
   textStyle(BOLD);
   textSize(40);
   text(valor, x + 26, y + 84);
@@ -2419,7 +2453,7 @@ function graficaVentas(r, y) {
   textAlign(LEFT, CENTER);
   textSize(30);
   text(r.semanal ? "Ventas por semana" : "Ventas por día", 60, y + 44);
-  leyenda([[GRAF_VENTA, "Venta"], [GRAF_UTILIDAD, "Utilidad"]], 640, y + 46);
+  leyenda([[GRAF_VENTA, "Venta"], [GRAF_UTILIDAD, "Utilidad bruta"]], 640, y + 46);
 
   const x0 = 120, x1 = 640, yBase = y + alto - 70, altoG = 290;
   const escalaY = tope(Math.max(...r.barras.map(b => b.v), 1));
@@ -2458,7 +2492,8 @@ function graficaVentas(r, y) {
     strokeWeight(2);
     line(cx, y + 90, cx, yBase);
     noStroke();
-    globo(cx, y + 92, [b.titulo, "Venta $" + miles(b.v), "Utilidad $" + miles(b.u)]);
+    globo(cx, y + 92, [b.titulo, "Venta $" + miles(b.v), "Utilidad bruta $" + miles(b.u),
+                       "Utilidad operativa " + dineroSigno(b.o)]);
   }
   return y + alto;
 }
@@ -2569,6 +2604,130 @@ function graficaHoras(r, y) {
                           d.n + (d.n === 1 ? " orden" : " órdenes") + " · $" + miles(d.t)]);
     }
   }
+  return y + alto;
+}
+
+// ---------- Tabla: venta, utilidad bruta y operativa de cada dia ----------
+function tablaDias(r, y) {
+  const filas = r.dias.slice().reverse().slice(0, 31);       // el mas nuevo primero
+  const altoFila = 52;
+  const alto = 150 + filas.length * altoFila + 70 + (r.dias.length > 31 ? 40 : 0);
+  noStroke();
+  fill(blanco);
+  rect(30, y, 640, alto, 26);
+
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textSize(30);
+  text(r.soloDia !== null ? "Detalle del día" : "Detalle por día", 60, y + 44);
+
+  const cols = [[330, "VENTA"], [485, "U. BRUTA"], [640, "U. OPERATIVA"]];
+  fill(textoSecundario);
+  textSize(18);
+  text("DÍA", 60, y + 104);
+  textAlign(RIGHT, CENTER);
+  cols.forEach(([x, etq]) => text(etq, x, y + 104));
+  stroke(borde);
+  strokeWeight(2);
+  line(60, y + 126, 640, y + 126);
+  noStroke();
+
+  filas.forEach((x, k) => {
+    const yy = y + 155 + k * altoFila;
+    const f = fechaDesdeIso(x.f);
+    fill(texto);
+    textAlign(LEFT, CENTER);
+    textSize(23);
+    text(DIAS[f.getDay()] + " " + f.getDate() + " " + MESES[f.getMonth()], 60, yy);
+    textAlign(RIGHT, CENTER);
+    text("$" + miles(x.v), 330, yy);
+    text("$" + miles(x.u), 485, yy);
+    fill(x.o < 0 ? rojo : texto);
+    text(dineroSigno(x.o), 640, yy);
+  });
+
+  let yt = y + 155 + filas.length * altoFila - 10;
+  if (r.dias.length > 31) {
+    fill(textoSecundario);
+    textAlign(LEFT, CENTER);
+    textSize(20);
+    text("Se muestran los 31 días más recientes; el total incluye todos.", 60, yt + 12);
+    yt += 40;
+  }
+  stroke(borde);
+  strokeWeight(2);
+  line(60, yt, 640, yt);
+  noStroke();
+  textStyle(BOLD);
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textSize(24);
+  text("Total", 60, yt + 36);
+  textAlign(RIGHT, CENTER);
+  text("$" + miles(r.venta), 330, yt + 36);
+  text("$" + miles(r.utilidad), 485, yt + 36);
+  fill(r.operativa < 0 ? rojo : texto);
+  text(dineroSigno(r.operativa), 640, yt + 36);
+  textStyle(NORMAL);
+  textAlign(LEFT, CENTER);
+  return y + alto;
+}
+
+// ---------- Utilidad operativa por dia (puede ser negativa) ----------
+function graficaOperativa(r, y) {
+  const alto = 450;
+  noStroke();
+  fill(blanco);
+  rect(30, y, 640, alto, 26);
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textSize(30);
+  text(r.semanal ? "Utilidad operativa por semana" : "Utilidad operativa por día", 60, y + 44);
+  fill(textoSecundario);
+  textSize(21);
+  text("Utilidad bruta − 18% del empleado − renta, luz y gas", 60, y + 82);
+
+  const vals = r.barras.map(b => b.o);
+  const maxP = Math.max(0, ...vals), minN = Math.min(0, ...vals);
+  const arriba = maxP > 0 ? tope(maxP).max : 0;
+  const abajo = minN < 0 ? tope(-minN).max : 0;
+  const rango = Math.max(arriba + abajo, 1);
+  const x0 = 120, x1 = 640, yTop = y + 120, altoG = 250;
+  const yCero = yTop + altoG * arriba / rango;
+  const fmt = n => (n < 0 ? "-" : "") + dineroCorto(Math.abs(n));
+
+  // Rejilla: tope, cero y fondo
+  const marcas = [[arriba, yTop], [0, yCero]];
+  if (abajo > 0) marcas.push([-abajo, yTop + altoG]);
+  textSize(19);
+  for (const [val, yy] of marcas) {
+    stroke(GRAF_REJILLA);
+    strokeWeight(val === 0 ? 2.5 : 1.5);
+    line(x0, yy, x1, yy);
+    noStroke();
+    fill(color('#9AA09A'));
+    textAlign(RIGHT, CENTER);
+    text(fmt(val), x0 - 10, yy);
+  }
+
+  const n = r.barras.length;
+  const paso = (x1 - x0) / n;
+  const wBar = Math.max(4, Math.min(40, paso - 12));
+  const cadaCuanto = Math.ceil(n / 10);
+  r.barras.forEach((b, k) => {
+    const cx = x0 + paso * (k + 0.5);
+    const h = altoG * Math.abs(b.o) / rango;
+    fill(GRAF_OPERATIVA);
+    if (b.o >= 0) rect(cx - wBar / 2, yCero - h, wBar, h, Math.min(4, h), Math.min(4, h), 0, 0);
+    else          rect(cx - wBar / 2, yCero, wBar, h, 0, 0, Math.min(4, h), Math.min(4, h));
+    if (k % cadaCuanto === 0 || k === n - 1) {
+      fill(textoSecundario);
+      textAlign(CENTER, CENTER);
+      textSize(20);
+      text(b.etq, cx, yTop + altoG + 30);
+    }
+  });
+  textAlign(LEFT, CENTER);
   return y + alto;
 }
 
@@ -2986,7 +3145,7 @@ function detalleReceta(p) {
   const datos = [
     ["COSTO POR PIEZA", "$" + formato(p.costoUnit || 0)],
     ["PRECIO", "$" + formato(p.precio || 0)],
-    ["UTILIDAD", "$" + formato(p.utilidad || 0)],
+    ["UTILIDAD BRUTA", "$" + formato(p.utilidad || 0)],
     ["MULTIPLICADOR", p.multiplicador ? (Math.round(p.multiplicador * 100) / 100) + "×" : "-"]
   ];
   datos.forEach(([etq, val], i) => {
@@ -3157,26 +3316,133 @@ function escribirPin(d) {
   pinError = "";
 }
 
-async function sha256Hex(textoPlano) {
-  const datos = new TextEncoder().encode(textoPlano);
-  const buf = await crypto.subtle.digest("SHA-256", datos);
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+// SHA-256 sin esperas (iOS solo permite Face ID si se pide en el mismo toque)
+function sha256Sync(texto) {
+  const bytes = Array.from(new TextEncoder().encode(texto));
+  const K = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+  ];
+  let h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  const largoBits = bytes.length * 8;
+  bytes.push(0x80);
+  while (bytes.length % 64 !== 56) bytes.push(0);
+  for (let i = 7; i >= 0; i--) bytes.push(Math.floor(largoBits / Math.pow(2, i * 8)) & 0xff);
+  const rot = (x, n) => (x >>> n) | (x << (32 - n));
+  const w = new Array(64);
+  for (let i = 0; i < bytes.length; i += 64) {
+    for (let t = 0; t < 16; t++) {
+      w[t] = (bytes[i + 4 * t] << 24) | (bytes[i + 4 * t + 1] << 16) | (bytes[i + 4 * t + 2] << 8) | bytes[i + 4 * t + 3];
+    }
+    for (let t = 16; t < 64; t++) {
+      const s0 = rot(w[t - 15], 7) ^ rot(w[t - 15], 18) ^ (w[t - 15] >>> 3);
+      const s1 = rot(w[t - 2], 17) ^ rot(w[t - 2], 19) ^ (w[t - 2] >>> 10);
+      w[t] = (w[t - 16] + s0 + w[t - 7] + s1) | 0;
+    }
+    let [a, b, c, d, e, f, g, hh] = h;
+    for (let t = 0; t < 64; t++) {
+      const S1 = rot(e, 6) ^ rot(e, 11) ^ rot(e, 25);
+      const ch = (e & f) ^ (~e & g);
+      const t1 = (hh + S1 + ch + K[t] + w[t]) | 0;
+      const S0 = rot(a, 2) ^ rot(a, 13) ^ rot(a, 22);
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const t2 = (S0 + maj) | 0;
+      hh = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+    }
+    h = [h[0] + a, h[1] + b, h[2] + c, h[3] + d, h[4] + e, h[5] + f, h[6] + g, h[7] + hh].map(x => x | 0);
+  }
+  return h.map(x => (x >>> 0).toString(16).padStart(8, "0")).join("");
 }
 
-async function verificarPinDueno() {
+// ---------- FACE ID (llave de acceso del iPhone) ----------
+// La primera vez entras con tu PIN y marcas "Usar Face ID"; el iPhone guarda una
+// llave de acceso. Despues, al tocar un boton de dueño, se pide Face ID.
+// Si Face ID falla o lo cancelas, se puede usar el PIN.
+const FACE_KEY = "bonbon_faceid";
+let face = { disponible: false, activar: false, verificando: false };
+
+function faceIdGuardado() {
+  try { return localStorage.getItem(FACE_KEY) || ""; } catch (e) { return ""; }
+}
+
+function revisarFaceId() {
+  try {
+    if (window.PublicKeyCredential && PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
+      PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+        .then(ok => { face.disponible = !!ok; }).catch(() => {});
+    }
+  } catch (e) {}
+}
+
+function bytesAleatorios(n) { const a = new Uint8Array(n); crypto.getRandomValues(a); return a; }
+function aBase64(buf) { return btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(buf)))); }
+function deBase64(s) { return Uint8Array.from(atob(s), c => c.charCodeAt(0)); }
+
+// Se llaman en el mismo toque (iOS lo exige)
+function crearFaceId() {
+  return navigator.credentials.create({ publicKey: {
+    challenge: bytesAleatorios(32),
+    rp: { name: "BON BON" },
+    user: { id: bytesAleatorios(16), name: "dueno-bonbon", displayName: "Dueño BON BON" },
+    pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
+    authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required", residentKey: "preferred" },
+    timeout: 60000
+  }}).then(c => {
+    try { localStorage.setItem(FACE_KEY, aBase64(c.rawId)); } catch (e) {}
+    return true;
+  });
+}
+
+function pedirFaceId() {
+  return navigator.credentials.get({ publicKey: {
+    challenge: bytesAleatorios(32),
+    allowCredentials: [{ type: "public-key", id: deBase64(faceIdGuardado()), transports: ["internal"] }],
+    userVerification: "required",
+    timeout: 60000
+  }}).then(() => true);
+}
+
+function entrarModo(modo) {
+  if (modo === "dueno")        irACaptura();
+  else if (modo === "estad")   irAEstadisticas();
+  else if (modo === "recetas") irARecetas();
+}
+
+// Botones de dueño: primero Face ID (si esta activado), si no, el PIN
+function entrarDueno(modo) {
+  if (faceIdGuardado() && navigator.credentials && !face.verificando) {
+    face.verificando = true;
+    pedirFaceId()
+      .then(() => { face.verificando = false; entrarModo(modo); })
+      .catch(() => { face.verificando = false; abrirPin(modo); pinError = "Usa tu PIN (Face ID no se completó)"; });
+    return;
+  }
+  abrirPin(modo);
+}
+
+function verificarPinDueno() {
   if (pinDueno === null || pinDueno === "") return;
-  const intento = pinDueno;
-  let ok = false;
   const esperado = pinModo === "reinicio" ? PIN_REGISTRO_HASH : PIN_DUENO_HASH;
-  try { ok = (await sha256Hex("bonbon:" + intento)) === esperado; }
-  catch (e) { pinError = "No se pudo revisar el PIN"; return; }
-  if (pinDueno === null) return;              // se cerro mientras revisaba
+  const ok = sha256Sync("bonbon:" + pinDueno) === esperado;
   if (ok) {
     pinDueno = null;
-    if (pinModo === "dueno")      irACaptura();
-    else if (pinModo === "estad") irAEstadisticas();
-    else if (pinModo === "recetas") irARecetas();
-    else                          reiniciarVendido();
+    if (pinModo === "reinicio") { reiniciarVendido(); return; }
+    // PIN correcto y marcaste "Usar Face ID": se guarda la llave de acceso (en este mismo toque)
+    if (face.activar && face.disponible && !faceIdGuardado()) {
+      const modo = pinModo;
+      face.activar = false;
+      crearFaceId()
+        .then(() => { avisar("Face ID activado"); entrarModo(modo); })
+        .catch(() => entrarModo(modo));
+      return;
+    }
+    entrarModo(pinModo);
   } else {
     pinDueno = "";
     pinError = "PIN incorrecto";
@@ -3237,11 +3503,30 @@ function dibujarPinDueno() {
   fill(activo ? blanco : color('#A5AAA5'));
   textSize(31);
   text("ENTRAR", b.x + b.w/2, b.y + b.h/2);
+
+  // Face ID: activar (primera vez) o volver a intentar
+  if (pinModo !== "reinicio" && (face.disponible || faceIdGuardado())) {
+    const f = PIN_FACE;
+    const guardado = !!faceIdGuardado();
+    noStroke();
+    fill(guardado ? color('#EEF3FA') : (face.activar ? color('#E4F1E8') : color('#F2F4F2')));
+    rect(f.x, f.y, f.w, f.h, 18);
+    textAlign(CENTER, CENTER);
+    textSize(24);
+    fill(texto);
+    if (guardado) text("Usar Face ID", f.x + f.w / 2, f.y + f.h / 2);
+    else text((face.activar ? "☑" : "☐") + "  Usar Face ID la próxima vez", f.x + f.w / 2, f.y + f.h / 2);
+  }
   textAlign(LEFT, CENTER);
 }
 
 function pressPinDueno(mx, my) {
   if (my < PIN_Y) { pinDueno = null; return; }
+  if (pinModo !== "reinicio" && enRect(mx, my, PIN_FACE)) {
+    if (faceIdGuardado()) { const modo = pinModo; pinDueno = null; entrarDueno(modo); }
+    else if (face.disponible) face.activar = !face.activar;
+    return;
+  }
   if (enRect(mx, my, PIN_ENTRAR)) { verificarPinDueno(); return; }
   for (const t of pinTeclas) {
     if (enRect(mx, my, t)) {
@@ -3442,9 +3727,10 @@ function calcularDesdePV() {
   asegurarDia();
   reiniciarResultados();
 
-  // Si hoy no hay ventas pero quedaron las de ayer sin cerrar, se usan esas
-  let fuente = pv;
-  if (!pv.ordenes.length && pv.anterior && pv.anterior.ordenes.length) fuente = pv.anterior;
+  // Solo las ordenes despues del ultimo reinicio (↺), igual que la barra y el historial.
+  // Si hoy no hay ventas pero quedaron las de ayer sin cerrar, se usan esas.
+  let fuente = { fecha: pv.fecha, ordenes: pv.ordenes.filter(o => o.n > (pv.corte || 0)) };
+  if (!fuente.ordenes.length && pv.anterior && pv.anterior.ordenes.length) fuente = pv.anterior;
 
   for (const o of fuente.ordenes) {
     for (const it of o.items) {
@@ -3528,10 +3814,10 @@ function handlePress(mxRaw, myRaw) {
 
   if (pantalla === 0) {
 
-    if (botonInicio.isOver(mx, my))          abrirPinDueno();
+    if (botonInicio.isOver(mx, my))          entrarDueno("dueno");
     else if (botonPV.isOver(mx, my))         irAPV();
-    else if (botonEst.isOver(mx, my))        abrirPin("estad");
-    else if (botonRec.isOver(mx, my))        abrirPin("recetas");
+    else if (botonEst.isOver(mx, my))        entrarDueno("estad");
+    else if (botonRec.isOver(mx, my))        entrarDueno("recetas");
     else if (botonCierrePV.isOver(mx, my))   calcularDesdePV();
 
   } else if (pantalla === 1) {

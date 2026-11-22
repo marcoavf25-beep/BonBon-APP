@@ -121,7 +121,7 @@ let fondo, blanco, texto, textoSecundario, verde, verdeHover, borde, rojo, rojoH
 
 // ---------- PANTALLAS ----------
 // 0 = inicio | 1 = captura | 2 = resultados | 3 = punto de venta | 4 = orden final
-// 5 = estadisticas | 6 = recetas | 7 = historial del punto de venta
+// 5 = estadisticas | 6 = recetas | 7 = historial del punto de venta | 8 = toppings
 let pantalla = 0;
 
 // ---------- GASTOS FIJOS DEL DIA ----------
@@ -462,7 +462,8 @@ function draw() {
   else if (pantalla === 4) pantallaOrden();
   else if (pantalla === 5) pantallaEstadisticas();
   else if (pantalla === 6) pantallaRecetas();
-  else                     pantallaHistorial();
+  else if (pantalla === 7) pantallaHistorial();
+  else                     pantallaToppings();
 
   // Las ventanas de abajo se pegan al borde de lo que se ve
   const ov = overlayActual();
@@ -482,7 +483,7 @@ function draw() {
   const ta = ov ? "none" : "pan-y";
   if (lienzo.style.touchAction !== ta) lienzo.style.touchAction = ta;
 
-  actualizarBarra(!ov && pantalla !== 2 && pantalla !== 5 && pantalla !== 6);
+  actualizarBarra(!ov && pantalla !== 2 && pantalla !== 5 && pantalla !== 6 && pantalla !== 8);
   ajustarLienzo();
 
   if (cajaPorMostrar) { asegurarVisible(cajaPorMostrar); cajaPorMostrar = null; }
@@ -2139,6 +2140,249 @@ function pressHistorial(mx, my) {
 }
 
 // ============================================================
+// PANTALLA 8 - TOPPINGS DE FRESAS (desde Estadisticas)
+// Se leen del detalle de cada orden del Punto de Venta, por ejemplo:
+//   "Fresas Grandes (Lotus Biscoff, Oreo)"
+// Cobro: con algun premium = $10 (los clasicos van incluidos); solo clasicos = $5.
+// La ganancia descuenta el costo de cada topping (de la hoja Recetas).
+// ============================================================
+
+let topZonas = { chips: [] };
+
+function costoTopping(nombre) {
+  for (const t of TOP_PREMIUM)  if (t.nombre === nombre) return { costo: t.costo, premium: true };
+  for (const t of TOP_CLASICOS) if (t.nombre === nombre) return { costo: t.costo, premium: false };
+  return null;
+}
+
+function analizarToppings(r) {
+  const a = {
+    fresas: 0, conTop: 0, ingreso: 0, costo: 0,
+    porTop: {},                                   // nombre -> veces
+    tipos: { premium: { n: 0, ingreso: 0, costo: 0 }, clasicos: { n: 0, ingreso: 0, costo: 0 } },
+    sinDetalle: false
+  };
+  TOP_PREMIUM.concat(TOP_CLASICOS).forEach(t => { a.porTop[t.nombre] = 0; });
+
+  const patron = /Fresas (Chicas|Grandes)(?: \(([^)]*)\))?/g;
+  for (const o of r.ordPV || []) {
+    if (o.d === undefined) { a.sinDetalle = true; continue; }
+    let m;
+    patron.lastIndex = 0;
+    while ((m = patron.exec(o.d)) !== null) {
+      a.fresas++;
+      const tops = m[2] ? m[2].split(",").map(t => t.trim()).filter(Boolean) : [];
+      if (!tops.length) continue;
+      let costo = 0, hayPremium = false;
+      for (const t of tops) {
+        const c = costoTopping(t);
+        if (!c) continue;
+        costo += c.costo;
+        if (c.premium) hayPremium = true;
+        a.porTop[t] = (a.porTop[t] || 0) + 1;
+      }
+      const cobro = hayPremium ? PRECIO_PREMIUM : PRECIO_CLASICOS;
+      const tipo = hayPremium ? a.tipos.premium : a.tipos.clasicos;
+      tipo.n++; tipo.ingreso += cobro; tipo.costo += costo;
+      a.conTop++; a.ingreso += cobro; a.costo += costo;
+    }
+  }
+  a.ganancia = a.ingreso - a.costo;
+  return a;
+}
+
+function irAToppings() {
+  pantalla = 8;
+  // Datos guardados de antes no traen el detalle de las ordenes: se vuelven a pedir
+  if (est.datos && est.datos.horas.some(o => o.d === undefined)) cargarEstadisticas();
+}
+
+// Boton en Estadisticas
+function botonToppings(y) {
+  const b = { x: 30, y: y, w: 640, h: 118 };
+  estZonas.toppings = b;
+  noStroke();
+  fill(0, 14);
+  rect(b.x, b.y + 5, b.w, b.h, 26);
+  fill('#FCE4EA');
+  rect(b.x, b.y, b.w, b.h, 26);
+  fill(rojo);
+  rect(b.x + 30, b.y + 30, 10, 58, 5);
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textStyle(BOLD);
+  textSize(31);
+  text("Toppings", b.x + 62, b.y + 42);
+  textStyle(NORMAL);
+  fill(textoSecundario);
+  textSize(22);
+  text("Los más pedidos y cuánto les ganas", b.x + 62, b.y + 82);
+  fill(rojo);
+  textAlign(RIGHT, CENTER);
+  textSize(38);
+  text("→", b.x + b.w - 34, b.y + b.h / 2);
+  textAlign(LEFT, CENTER);
+  return y + b.h;
+}
+
+function pantallaToppings() {
+  botonAtras.display();
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textSize(46);
+  text("Toppings", 158, 80);
+
+  let sub = "De las fresas con crema del Punto de Venta", colSub = textoSecundario;
+  if (est.cargando) sub = "Actualizando…";
+  else if (est.error) { sub = est.error + (est.datos ? " · datos guardados" : ""); colSub = rojo; }
+  fill(colSub);
+  textSize(23);
+  text(recortar(sub, 510), 160, 128);
+
+  // Mismo periodo que Estadisticas
+  const opciones = [[-1, "Día"], [7, "7 días"], [30, "30 días"], [0, "Todo"]];
+  topZonas.chips = [];
+  opciones.forEach(([val, etq], k) => {
+    const b = { x: 30 + k * 164, y: 162, w: 148, h: 66, val: val };
+    topZonas.chips.push(b);
+    const sel = est.periodo === val;
+    noStroke();
+    if (sel) fill(AZUL); else { fill(blanco); stroke(borde); strokeWeight(2); }
+    rect(b.x, b.y, b.w, b.h, 33);
+    noStroke();
+    fill(sel ? blanco : texto);
+    textAlign(CENTER, CENTER);
+    textSize(26);
+    text(etq, b.x + b.w / 2, b.y + b.h / 2);
+  });
+  textAlign(LEFT, CENTER);
+
+  const r = resumenEst();
+  const a = r ? analizarToppings(r) : null;
+  if (!a || a.fresas === 0) {
+    fill(blanco);
+    rect(30, 252, 640, 200, 26);
+    fill(textoSecundario);
+    textAlign(CENTER, CENTER);
+    textSize(25);
+    text(est.cargando ? "Cargando…" : "No hay fresas vendidas en este periodo.", 350, 335);
+    textSize(21);
+    text("Se cuentan las órdenes del Punto de Venta.", 350, 380);
+    textAlign(LEFT, CENTER);
+    altoContenido = 480;
+    return;
+  }
+
+  // ---------- Numeros grandes ----------
+  const pct = Math.round(a.conTop / a.fresas * 100);
+  const promGan = a.conTop ? a.ganancia / a.conTop : 0;
+  const promCobro = a.conTop ? a.ingreso / a.conTop : 0;
+  tarjetaDato(30, 252, "FRESAS VENDIDAS", String(a.fresas), a.conTop + " con toppings (" + pct + "%)");
+  tarjetaDato(360, 252, "GANANCIA TOPPINGS", "$" + formato(a.ganancia),
+              "cobrado $" + miles(a.ingreso) + " − costo $" + formato(a.costo), color(VERDE_OPERATIVA));
+  tarjetaDato(30, 420, "GANAS POR FRESA", "$" + formato(promGan),
+              "en promedio (cobras $" + formato(promCobro) + ")", color(VERDE_OPERATIVA));
+  tarjetaDato(360, 420, "MARGEN", (a.ingreso ? Math.round(a.ganancia / a.ingreso * 100) : 0) + "%",
+              "de lo que cobras por toppings");
+
+  let y = 592;
+
+  // ---------- Toppings mas pedidos ----------
+  const filas = Object.keys(a.porTop).map(n => ({ n: n, veces: a.porTop[n], info: costoTopping(n) }))
+                      .sort((p, q) => q.veces - p.veces);
+  const altoFila = 66;
+  const alto = 100 + filas.length * altoFila;
+  noStroke();
+  fill(blanco);
+  rect(30, y, 640, alto, 26);
+  fill(texto);
+  textSize(30);
+  text("Toppings más pedidos", 60, y + 44);
+  const max = Math.max(...filas.map(f => f.veces), 1);
+  filas.forEach((f, k) => {
+    const yy = y + 100 + k * altoFila;
+    const activo = f.veces > 0;
+    fill(f.info && f.info.premium ? rojo : verde);
+    ellipse(66, yy - 8, 12, 12);
+    fill(activo ? texto : color('#B4B9B4'));
+    textAlign(LEFT, CENTER);
+    textSize(23);
+    text(f.n, 82, yy - 10);
+    fill(activo ? textoSecundario : color('#C2C6C2'));
+    textSize(18);
+    text((f.info && f.info.premium ? "Premium" : "Clásico") + " · $" + formato(f.info ? f.info.costo : 0) + " c/u", 82, yy + 16);
+    fill('#F1F3F1');
+    rect(330, yy - 11, 250, 22, 4);
+    if (activo) { fill(GRAF_VENTA); rect(330, yy - 11, Math.max(6, 250 * f.veces / max), 22, 4); }
+    fill(activo ? texto : color('#B4B9B4'));
+    textAlign(RIGHT, CENTER);
+    textSize(23);
+    text(f.veces, 640, yy);
+  });
+  textAlign(LEFT, CENTER);
+  y += alto + 22;
+
+  // ---------- Ganancia por tipo de cobro ----------
+  const tipos = [
+    ["Con premium ($" + PRECIO_PREMIUM + ")", "clásicos incluidos", a.tipos.premium],
+    ["Solo clásicos ($" + PRECIO_CLASICOS + ")", "", a.tipos.clasicos]
+  ];
+  const altoT = 100 + tipos.length * 130 + 60;
+  fill(blanco);
+  rect(30, y, 640, altoT, 26);
+  fill(texto);
+  textSize(30);
+  text("Ganancia por tipo", 60, y + 44);
+  tipos.forEach(([nom, cobro, t], k) => {
+    const yy = y + 100 + k * 130;
+    fill(texto);
+    textStyle(BOLD);
+    textSize(25);
+    text(nom, 60, yy);
+    textStyle(NORMAL);
+    fill(textoSecundario);
+    textSize(20);
+    text(t.n + (t.n === 1 ? " fresa" : " fresas") + (cobro ? " · " + cobro : ""), 60, yy + 32);
+    const costoProm = t.n ? t.costo / t.n : 0, ganProm = t.n ? (t.ingreso - t.costo) / t.n : 0;
+    textSize(19);
+    fill(textoSecundario);
+    textAlign(RIGHT, CENTER);
+    text("COSTO PROM.", 470, yy - 4);
+    text("GANAS PROM.", 640, yy - 4);
+    textSize(26);
+    fill(texto);
+    text(t.n ? "$" + formato(costoProm) : "-", 470, yy + 30);
+    fill(t.n ? color(VERDE_OPERATIVA) : color('#B4B9B4'));
+    textStyle(BOLD);
+    text(t.n ? "$" + formato(ganProm) : "-", 640, yy + 30);
+    textStyle(NORMAL);
+    textAlign(LEFT, CENTER);
+    if (k < tipos.length - 1) { stroke(borde); strokeWeight(1.5); line(60, yy + 72, 640, yy + 72); noStroke(); }
+  });
+  fill(textoSecundario);
+  textSize(21);
+  text("Sin toppings: " + (a.fresas - a.conTop) + (a.fresas - a.conTop === 1 ? " fresa" : " fresas"),
+       60, y + altoT - 40);
+  y += altoT + 22;
+
+  fill(textoSecundario);
+  textAlign(CENTER, CENTER);
+  textSize(20);
+  text("Costos de cada topping tomados de tu hoja Recetas", 350, y + 10);
+  if (a.sinDetalle) text("Algunas órdenes viejas no traen detalle y no se cuentan", 350, y + 40);
+  textAlign(LEFT, CENTER);
+  altoContenido = y + 70;
+}
+
+function pressToppings(mx, my) {
+  if (botonAtras.isOver(mx, my)) { pantalla = 5; return; }
+  if (enRect(mx, my, { x: 150, y: 105, w: 520, h: 46 })) { cargarEstadisticas(); return; }
+  for (const c of topZonas.chips) {
+    if (enRect(mx, my, c)) { est.periodo = c.val; est.sel = null; return; }
+  }
+}
+
+// ============================================================
 // PANTALLA 5 - ESTADISTICAS
 // Datos de la pestaña "Registro App" (un renglon por dia registrado)
 // y de "Órdenes App" (hora de cada orden del Punto de Venta).
@@ -2146,7 +2390,7 @@ function pressHistorial(mx, my) {
 
 const EST_KEY = "bonbon_est";
 let est = { cargando: false, error: "", datos: null, actualizado: "", periodo: 7, sel: null, prodSem: 0 };
-let estZonas = { chips: [], dias: [], horas: [], sem: [], semp: [], selector: null };   // donde se puede tocar
+let estZonas = { chips: [], dias: [], horas: [], sem: [], semp: [], selector: null, toppings: null };   // donde se puede tocar
 
 // Dias de la semana empezando en lunes
 const DIAS_SEM = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
@@ -2255,6 +2499,7 @@ function resumenEst() {
     r.porPostre[N + 1] += x.fg || 0;
   }
 
+  r.ordPV = d.horas.filter(o => dentro(o.f));
   for (const o of d.horas) {
     if (!dentro(o.f)) continue;
     const h = horaDe(o.h);
@@ -2339,6 +2584,7 @@ function pantallaEstadisticas() {
     text("Se llena cada vez que tocas REGISTRAR al cerrar el día.", 350, 385);
     textAlign(LEFT, CENTER);
     estZonas.dias = []; estZonas.horas = []; estZonas.sem = []; estZonas.semp = []; estZonas.selector = null;
+    estZonas.toppings = null;
     altoContenido = 500;
     return;
   }
@@ -2374,6 +2620,7 @@ function pantallaEstadisticas() {
     estZonas.dias = []; estZonas.sem = []; estZonas.semp = []; estZonas.selector = null;
   }
   y = graficaPostres(r, y) + 22;
+  y = botonToppings(y) + 22;
   y = graficaHoras(r, y) + 22;
 
   altoContenido = y + 10;
@@ -2586,7 +2833,7 @@ function graficaHoras(r, y) {
     const cx = x0 + paso * (k + 0.5);
     barraVertical(cx - wBar / 2, yBase, wBar, altoG * d.n / topeN, GRAF_VENTA);
     estZonas.horas.push({ x: x0 + paso * k, y: y + 100, w: paso, h: alto - 100, k: k, hora: h });
-    if (n <= 12 || k % 2 === 0) {
+    if (paso >= 58 || k % 2 === 0) {
       fill(textoSecundario);
       textAlign(CENTER, CENTER);
       textSize(19);
@@ -2853,6 +3100,7 @@ function globo(cx, y, lineas) {
 
 function pressEstadisticas(mx, my) {
   if (botonAtras.isOver(mx, my)) { irAInicio(); return; }
+  if (estZonas.toppings && enRect(mx, my, estZonas.toppings)) { irAToppings(); return; }
   if (enRect(mx, my, { x: 150, y: 105, w: 520, h: 46 })) { cargarEstadisticas(); return; }
 
   for (const c of estZonas.chips) {
@@ -3861,9 +4109,13 @@ function handlePress(mxRaw, myRaw) {
 
     pressRecetas(mx, my);
 
-  } else {
+  } else if (pantalla === 7) {
 
     pressHistorial(mx, my);
+
+  } else {
+
+    pressToppings(mx, my);
   }
 }
 

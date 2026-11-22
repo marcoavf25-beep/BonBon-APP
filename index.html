@@ -114,6 +114,7 @@ let destelloRojo = new Array(20).fill(-9999);
 const AZUL = '#3D93CB', AZUL_HOVER = '#55A4D7';
 const GRAF_VENTA = '#2E86C1', GRAF_UTILIDAD = '#3A8F5C', GRAF_REJILLA = '#ECEFEC';
 const GRAF_OPERATIVA = '#6F5BA8';
+const VERDE_OPERATIVA = '#2F7A4D';   // valor de la utilidad operativa cuando es positiva (rojo si es negativa)
 
 // ---------- COLORES ----------
 let fondo, blanco, texto, textoSecundario, verde, verdeHover, borde, rojo, rojoHover;
@@ -2350,7 +2351,7 @@ function pantallaEstadisticas() {
   tarjetaDato(360, 252, "UTILIDAD BRUTA", "$" + miles(r.utilidad),
               r.venta > 0 ? Math.round(r.utilidad / r.venta * 100) + "% de la venta" : "");
   tarjetaDato(30, 420, "UTILIDAD OPERATIVA", dineroSigno(r.operativa),
-              "bruta − 18% − $" + (RENTA + LUZ + GAS) + "/día", r.operativa < 0 ? rojo : null);
+              "bruta − 18% − $" + (RENTA + LUZ + GAS) + "/día", r.operativa < 0 ? rojo : color(VERDE_OPERATIVA));
   tarjetaDato(360, 420, "POSTRES VENDIDOS", miles(r.postres),
               unDia ? "ese día" : "≈ " + Math.round(r.postres / nd) + " por día");
   if (!unDia) {
@@ -2358,7 +2359,7 @@ function pantallaEstadisticas() {
                 r.mejor ? "Mejor: " + DIAS[fechaDesdeIso(r.mejor.f).getDay()] + " " +
                           fechaDesdeIso(r.mejor.f).getDate() + " · $" + miles(r.mejor.v) : "");
     tarjetaDato(360, 588, "OPERATIVA PROMEDIO", dineroSigno(r.operativa / nd), "por día",
-                r.operativa < 0 ? rojo : null);
+                r.operativa < 0 ? rojo : color(VERDE_OPERATIVA));
   }
 
   let y = unDia ? 590 : 758;
@@ -2642,7 +2643,7 @@ function tablaDias(r, y) {
     textAlign(RIGHT, CENTER);
     text("$" + miles(x.v), 330, yy);
     text("$" + miles(x.u), 485, yy);
-    fill(x.o < 0 ? rojo : texto);
+    fill(x.o < 0 ? rojo : color(VERDE_OPERATIVA));
     text(dineroSigno(x.o), 640, yy);
   });
 
@@ -2666,7 +2667,7 @@ function tablaDias(r, y) {
   textAlign(RIGHT, CENTER);
   text("$" + miles(r.venta), 330, yt + 36);
   text("$" + miles(r.utilidad), 485, yt + 36);
-  fill(r.operativa < 0 ? rojo : texto);
+  fill(r.operativa < 0 ? rojo : color(VERDE_OPERATIVA));
   text(dineroSigno(r.operativa), 640, yt + 36);
   textStyle(NORMAL);
   textAlign(LEFT, CENTER);

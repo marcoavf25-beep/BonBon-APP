@@ -1072,6 +1072,7 @@ function totalesPV() {
 
 function reiniciarVendido() {
   pv.corte = pv.siguiente - 1;
+  pv.anterior = null;          // tampoco se usan las ordenes de ayer en el cierre
   guardarPV();
   barraTexto = "";
   avisar("Vendido hoy reiniciado");
@@ -3729,9 +3730,11 @@ function calcularDesdePV() {
   reiniciarResultados();
 
   // Solo las ordenes despues del ultimo reinicio (↺), igual que la barra y el historial.
-  // Si hoy no hay ventas pero quedaron las de ayer sin cerrar, se usan esas.
+  // Las de ayer se usan solo si hoy no hubo ninguna venta NI reinicio (por si no alcanzaste a cerrar).
   let fuente = { fecha: pv.fecha, ordenes: pv.ordenes.filter(o => o.n > (pv.corte || 0)) };
-  if (!fuente.ordenes.length && pv.anterior && pv.anterior.ordenes.length) fuente = pv.anterior;
+  const hoySinNada = pv.ordenes.length === 0 && !pv.corte;
+  const deAyer = hoySinNada && pv.anterior && pv.anterior.ordenes.length;
+  if (deAyer) fuente = pv.anterior;
 
   for (const o of fuente.ordenes) {
     for (const it of o.items) {
@@ -3747,8 +3750,9 @@ function calcularDesdePV() {
   }
 
   const fecha = fechaDesdeIso(fuente.fecha);
-  subtituloResumen = "Punto de Venta · " + fuente.ordenes.length +
-                     (fuente.ordenes.length === 1 ? " orden" : " órdenes");
+  subtituloResumen = (deAyer ? "Sin cerrar del " + textoFecha(fecha).slice(0, -5) + " · "
+                             : "Punto de Venta · ") +
+                     fuente.ordenes.length + (fuente.ordenes.length === 1 ? " orden" : " órdenes");
   terminarCalculo(3);
   fechaRegistro = fecha;
 }

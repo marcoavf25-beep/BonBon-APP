@@ -341,6 +341,7 @@ function setup() {
   construirTecladoNum();
   revisarFaceId();
   cargarPV();
+  reanudarMP();                   // si se cerro la app a medio cobro con tarjeta
   cargarEstadisticasGuardadas();
   cargarRecetasGuardadas();       // costos de la ultima vez
   cargarRecetas(false);           // y se actualizan con la hoja Recetas
@@ -402,6 +403,7 @@ function prepararToques() {
 
 // Ventana que esta abierta encima (teclado, PIN o fresas)
 function overlayActual() {
+  if (term)                           return { fin: TERM_FIN, dibujar: dibujarTerm,       press: pressTerm };
   if (pinDueno !== null)              return { fin: PIN_FIN, dibujar: dibujarPinDueno,    press: pressPinDueno };
   if (numEntrada)                     return { fin: NUM_FIN, dibujar: dibujarNumero,      press: pressNumero };
   if (pantalla === 3 && cobro)        return { fin: PAGO_FIN, dibujar: dibujarCobro,      press: pressCobro };
@@ -1427,7 +1429,7 @@ function pressPV(mx, my) {
   if (pv.carrito.length && enRect(mx, my, pvOrdenar)) cobro = { total: totalItems(pv.carrito) };
 }
 
-function ordenar(pago) {
+function ordenar(pago, mp) {
   if (!pv.carrito.length) return;
   const items = JSON.parse(JSON.stringify(pv.carrito));
   asegurarDia();
@@ -1446,6 +1448,7 @@ function ordenar(pago) {
     comision: total * COMISION_EMPLEADO,
     pago: pago || "efectivo"
   };
+  if (mp) orden.mp = mp;              // cobrado y confirmado por la terminal
   pv.siguiente++;
   pv.ordenes.push(orden);
   pv.carrito = [];
@@ -1454,7 +1457,7 @@ function ordenar(pago) {
   const piezas = piezasDe(items);
   pv.pendientes.push({
     tipo: "orden", id: orden.id, fecha: pv.fecha, n: orden.n, hora: orden.hora,
-    piezas: piezas, total: total, detalle: textoDetalle(items), pago: orden.pago
+    piezas: piezas, total: total, detalle: textoDetalle(items), pago: orden.pago, mp: mp || ""
   });
   moverStockLocal(piezas, -1);
   guardarPV();
@@ -1669,7 +1672,7 @@ function pantallaOrden() {
   text("Orden #" + o.n, 158, 80);
   fill(textoSecundario);
   textSize(26);
-  text(o.hora + (o.pago ? " · " + NOMBRE_PAGO[o.pago] : ""), 160, 128);
+  text(o.hora + (o.pago ? " · " + NOMBRE_PAGO[o.pago] + (o.mp ? " ✓" : "") : ""), 160, 128);
 
   // Cancelar orden (doble toque)
   const c = OF_CANCELAR;
@@ -1787,19 +1790,10 @@ function pressOrden(mx, my) {
 
   if (enRect(mx, my, OF_CANCELAR)) {
     if (millis() - confirmarCancelar < TIEMPO_CONFIRMAR) {
-      const n = ultimaOrden.n;
-      const id = ultimaOrden.id;
-      pv.ordenes = pv.ordenes.filter(o => o.n !== n);
-      moverStockLocal(piezasDe(ultimaOrden.items), +1);
-
-      // Si la orden ni siquiera se habia enviado, basta con quitarla de la fila
-      const k = pv.pendientes.findIndex(op => op.tipo === "orden" && op.id === id);
-      if (k >= 0) pv.pendientes.splice(k, 1);
-      else pv.pendientes.push({ tipo: "cancelar", id: id });
-      guardarPV();
-      sincronizar(false);
-      ultimaOrden = null;
       confirmarCancelar = SIN_CONFIRMAR;
+      // Pagada con la terminal: primero se devuelve el dinero a la tarjeta
+      if (ultimaOrden.mp) { pedirDevolucion(ultimaOrden); return; }
+      cancelarOrdenLocal(ultimaOrden, false);
       if (ordenDesdeHistorial) { ordenDesdeHistorial = false; pantalla = 7; }
       else irAPV();
     } else {
@@ -1808,6 +1802,21 @@ function pressOrden(mx, my) {
   }
 }
 
+
+function cancelarOrdenLocal(orden, devuelto) {
+  const n = orden.n;
+  const id = orden.id;
+  pv.ordenes = pv.ordenes.filter(o => o.n !== n);
+  moverStockLocal(piezasDe(orden.items), +1);
+
+  // Si la orden ni siquiera se habia enviado, basta con quitarla de la fila
+  const k = pv.pendientes.findIndex(op => op.tipo === "orden" && op.id === id);
+  if (k >= 0 && !devuelto) pv.pendientes.splice(k, 1);
+  else pv.pendientes.push({ tipo: "cancelar", id: id, devuelto: !!devuelto });
+  guardarPV();
+  sincronizar(false);
+  if (ultimaOrden === orden) ultimaOrden = null;
+}
 
 // ============================================================
 // PANTALLA 7 - HISTORIAL DEL DIA (Punto de Venta)
@@ -1955,7 +1964,7 @@ function tarjetaHistorial(o, y) {
   textStyle(NORMAL);
   fill(textoSecundario);
   textSize(23);
-  text("  ·  " + o.hora + (o.pago ? " · " + NOMBRE_PAGO[o.pago] : ""), 60 + w, y + 41);
+  text("  ·  " + o.hora + (o.pago ? " · " + NOMBRE_PAGO[o.pago] + (o.mp ? " ✓" : "") : ""), 60 + w, y + 41);
   fill(texto);
   textAlign(RIGHT, CENTER);
   textStyle(BOLD);
@@ -2389,7 +2398,362 @@ function dibujarCobro() {
 function pressCobro(mx, my) {
   if (my < PAGO_Y) { cobro = null; return; }
   for (const b of botonesPago()) {
-    if (enRect(mx, my, b)) { cobro = null; ordenar(b.pago); return; }
+    if (enRect(mx, my, b)) {
+      const total = cobro.total;
+      cobro = null;
+      if (b.pago === "tarjeta") cobrarConTerminal(total);   // se manda a la terminal Mercado Pago
+      else ordenar(b.pago);
+      return;
+    }
+  }
+}
+
+// ============================================================
+// TERMINAL MERCADO PAGO (Point Smart 2 en modo PDV)
+//  Tarjeta -> el cobro se manda a la terminal -> la app pregunta cada
+//  2.5 s si ya se pago -> solo entonces se registra la orden.
+//  La llave de Mercado Pago vive en el Apps Script, nunca aqui.
+// ============================================================
+
+let term = null;        // ventana abierta: { modo: "cobro"|"devolucion", estado, total, msg, ... }
+let mpTimer = null;
+const TERM_Y = 800, TERM_FIN = 1495;
+const MP_MINUTOS_APP = 5;
+
+async function llamarMP(datos) {
+  let pin = leerPin();
+  if (!pin) {
+    pin = (window.prompt("PIN de registro (solo se pide una vez):") || "").trim();
+    if (!pin) return { ok: false, error: "PIN" };
+    guardarPin(pin);
+  }
+  const r = await fetch(SCRIPT_URL, { method: "POST", body: JSON.stringify(Object.assign({ pin: pin }, datos)) });
+  return await r.json();
+}
+
+function programarConsulta(ms) {
+  clearTimeout(mpTimer);
+  mpTimer = setTimeout(consultarMP, ms);
+}
+
+function textoErrorMP(m) {
+  m = String(m || "");
+  if (/esperando|tiene otro cobro/i.test(m)) return m;
+  if (/terminal_not|owner|not_found/i.test(m)) return "La terminal no responde. Revisa que esté prendida y en modo Punto de Venta.";
+  if (/unauthorized|401/i.test(m)) return "La llave de Mercado Pago no funciona. Avísale al dueño.";
+  return m ? "Mercado Pago: " + m : "No se pudo mandar el cobro.";
+}
+
+function textoEstadoMP(estado, detalle) {
+  if (estado === "canceled") return "Se canceló el cobro en la terminal.";
+  if (estado === "expired")  return "Nadie pagó a tiempo y el cobro venció.";
+  if (estado === "failed")   return "La tarjeta fue rechazada" + (detalle && detalle !== "failed" ? " (" + detalle + ")" : "") + ".";
+  if (estado === "refunded") return "Ese cobro ya fue devuelto.";
+  return "El cobro no se completó" + (estado ? " (" + estado + ")" : "") + ".";
+}
+
+// ---------- Cobrar ----------
+
+function cobrarConTerminal(total) {
+  // La referencia identifica el cobro: si se reintenta con la misma, no se cobra doble
+  const ref = pv.fecha.replace(/-/g, "") + "-" + pv.siguiente + "-" + Date.now().toString(36);
+  pv.mp = { ref: ref, total: total, id: null, t: Date.now() };
+  guardarPV();
+  term = { modo: "cobro", estado: "enviando", total: total, msg: "" };
+  enviarCobroMP();
+}
+
+async function enviarCobroMP() {
+  const m = pv.mp;
+  if (!m) return;
+  term.estado = "enviando";
+  term.cancelando = false;
+  try {
+    const j = await llamarMP({ accion: "mp_cobrar", total: m.total, ref: m.ref });
+    if (pv.mp !== m) return;
+    if (j.ok) {
+      m.id = j.id;
+      guardarPV();
+      term.estado = "esperando";
+      programarConsulta(2000);
+    } else if (j.error === "MP_CONFIG") {
+      pv.mp = null; guardarPV();
+      term.estado = "sinconfig";
+    } else if (j.error === "PIN") {
+      borrarPin();
+      falloMP("PIN de registro incorrecto. Toca Reintentar y escríbelo otra vez.");
+    } else {
+      falloMP(textoErrorMP(j.mensaje));
+    }
+  } catch (e) {
+    if (pv.mp === m) falloMP("Sin conexión. Revisa el internet y toca Reintentar.");
+  }
+}
+
+async function consultarMP() {
+  const m = pv.mp;
+  if (!m || !m.id || !term) return;
+  try {
+    const j = await llamarMP({ accion: "mp_estado", id: m.id });
+    if (pv.mp !== m) return;
+    if (!j.ok) { term.red = true; programarConsulta(4000); return; }
+    term.red = false;
+
+    if (j.estado === "processed") { aprobadoMP(m); return; }
+    if (j.estado === "created" || j.estado === "at_terminal" || j.estado === "action_required") {
+      term.enTerminal = j.estado === "at_terminal";
+      programarConsulta(2500);
+      return;
+    }
+    // Cancelado, vencido, rechazado...
+    pv.mp = null;
+    guardarPV();
+    if (term.cancelando && j.estado === "canceled") { term = null; cobro = { total: m.total }; avisar("Cobro cancelado"); return; }
+    falloMP(textoEstadoMP(j.estado, j.detalle));
+  } catch (e) {
+    // Sin internet: se sigue preguntando (el cliente pudo haber pagado)
+    if (term) { term.red = true; programarConsulta(4000); }
+  }
+}
+
+function aprobadoMP(m) {
+  clearTimeout(mpTimer);
+  pv.mp = null;
+  ordenar("tarjeta", m.id);          // guarda la orden y quita el cobro pendiente en un solo paso
+  term = { modo: "cobro", estado: "aprobado", total: m.total, hasta: millis() + 1600 };
+}
+
+function falloMP(msg) {
+  clearTimeout(mpTimer);
+  term.estado = "fallo";
+  term.msg = msg;
+  term.cancelando = false;
+}
+
+async function cancelarCobroMP() {
+  const m = pv.mp;
+  if (!m) { term = null; return; }
+  if (!m.id) return;                 // todavia se esta mandando
+  term.cancelando = true;
+  term.estado = "cancelando";
+  term.desdeCancel = millis();
+  try {
+    const j = await llamarMP({ accion: "mp_cancelar", id: m.id });
+    if (pv.mp !== m) return;
+    if (j.ok && j.estado === "canceled") {
+      clearTimeout(mpTimer);
+      pv.mp = null; guardarPV();
+      term = null; cobro = { total: m.total };
+      avisar("Cobro cancelado");
+      return;
+    }
+    if (j.ok && j.estado === "processed") { aprobadoMP(m); return; }
+    // La terminal ya lo tenia en pantalla: se cancela alla y aqui se sigue revisando
+    programarConsulta(1500);
+  } catch (e) {
+    term.cancelando = false;
+    term.estado = "esperando";
+    avisar("Sin conexión: cancélalo en la terminal");
+    programarConsulta(3000);
+  }
+}
+
+// Elegir otro metodo de pago despues de un error
+function otroPagoMP() {
+  const m = pv.mp;
+  // Si el internet se cayo justo al mandarlo, el cobro pudo llegar a la terminal: se cancela
+  if (m && !m.id) llamarMP({ accion: "mp_cancelar", ultima: true }).catch(() => {});
+  pv.mp = null; guardarPV();
+  const total = term.total;
+  term = null;
+  cobro = { total: total };
+}
+
+function reintentarMP() {
+  if (pv.mp && !pv.mp.id) enviarCobroMP();                 // misma referencia: no cobra doble
+  else cobrarConTerminal(totalItems(pv.carrito));
+}
+
+// Si se cerro la app mientras se cobraba, se retoma al abrirla
+function reanudarMP() {
+  if (!pv.mp || !pv.mp.ref) return;
+  if (!pv.carrito.length) { pv.mp = null; guardarPV(); return; }
+  pantalla = 3;
+  term = { modo: "cobro", estado: pv.mp.id ? "esperando" : "enviando", total: pv.mp.total, msg: "" };
+  if (pv.mp.id) programarConsulta(500); else enviarCobroMP();
+}
+
+// ---------- Devolver (al cancelar una orden pagada con la terminal) ----------
+
+function pedirDevolucion(o) {
+  term = { modo: "devolucion", estado: "confirmar", total: o.total, orden: o, msg: "" };
+}
+
+async function devolverMP() {
+  const o = term.orden;
+  term.estado = "devolviendo";
+  try {
+    const j = await llamarMP({ accion: "mp_reembolso", id: o.mp });
+    if (!term || term.orden !== o) return;
+    if (j.ok && j.estado === "refunded") {
+      cancelarOrdenLocal(o, true);
+      term.estado = "devuelto";
+      term.hasta = millis() + 1800;
+      return;
+    }
+    if (j.error === "PIN") borrarPin();
+    term.estado = "fallo";
+    term.msg = j.error === "MP_CONFIG" ? "La terminal ya no está conectada a la app. Devuélvelo desde la app de Mercado Pago."
+             : j.error === "PIN" ? "PIN de registro incorrecto. Toca Reintentar."
+             : textoErrorMP(j.mensaje);
+  } catch (e) {
+    if (term && term.orden === o) { term.estado = "fallo"; term.msg = "Sin conexión. Revisa el internet y reintenta."; }
+  }
+}
+
+// Despues de "aprobado" / "devuelto" la ventana se cierra sola
+function cerrarTermSiToca() {
+  if (!term || !term.hasta || millis() < term.hasta) return;
+  const eraDevolucion = term.modo === "devolucion";
+  term = null;
+  if (eraDevolucion) {
+    if (ordenDesdeHistorial) { ordenDesdeHistorial = false; pantalla = 7; } else irAPV();
+  }
+}
+
+// ---------- Dibujo ----------
+
+function botonesTerm() {
+  const t = term;
+  const y = TERM_Y + 505, h = 106;
+  const izq = { x: 50, y: y, w: 290, h: h }, der = { x: 360, y: y, w: 290, h: h }, todo = { x: 50, y: y, w: 600, h: h };
+  const C_TARJ = '#6F5BA8';
+  if (t.modo === "cobro") {
+    if (t.estado === "esperando") return [Object.assign({ etq: "Cancelar cobro", col: '#EDEFED', tx: rojo, acc: "cancelar" }, todo)];
+    if (t.estado === "fallo") return [Object.assign({ etq: "Reintentar", col: C_TARJ, acc: "reintentar" }, izq),
+                                      Object.assign({ etq: "Otro pago", col: '#EDEFED', tx: texto, acc: "otro" }, der)];
+    if (t.estado === "sinconfig") return [Object.assign({ etq: "Tarjeta a mano", col: C_TARJ, acc: "manual" }, izq),
+                                          Object.assign({ etq: "Otro pago", col: '#EDEFED', tx: texto, acc: "otro" }, der)];
+  } else {
+    if (t.estado === "confirmar") return [Object.assign({ etq: "Sí, devolver", col: rojo, acc: "devolver" }, izq),
+                                          Object.assign({ etq: "No", col: '#EDEFED', tx: texto, acc: "cerrar" }, der)];
+    if (t.estado === "fallo") return [Object.assign({ etq: "Reintentar", col: rojo, acc: "devolver" }, izq),
+                                      Object.assign({ etq: "Cerrar", col: '#EDEFED', tx: texto, acc: "cerrar" }, der)];
+  }
+  return [];
+}
+
+function dibujarTerm() {
+  cerrarTermSiToca();
+  if (!term) return;
+  const t = term;
+
+  noStroke();
+  fill(0, 115);
+  rect(0, -OFFSET_Y - dyOverlay - 10, BASE_W, TERM_Y + OFFSET_Y + dyOverlay + 10);
+  fill(blanco);
+  rect(-20, TERM_Y, BASE_W + 40, 4000, 30);
+
+  // Textos segun el estado
+  const cobroT = {
+    enviando:   ["Mandando a la terminal…", "Espera un momento"],
+    esperando:  ["Cobra en la terminal", t.enTerminal ? "El cliente ya puede pasar su tarjeta" : "Si no aparece, presiona Actualizar o el botón verde"],
+    cancelando: ["Cancelando cobro…", millis() - (t.desdeCancel || 0) > 6000 ? "Si sigue en la terminal, cancélalo ahí" : "Espera un momento"],
+    aprobado:   ["¡Pago aprobado!", "La orden quedó registrada"],
+    fallo:      ["No se cobró", ""],
+    sinconfig:  ["La terminal no está conectada", "Todavía no se configura Mercado Pago"]
+  };
+  const devT = {
+    confirmar:   ["¿Devolver el dinero?", "Regresa a la tarjeta del cliente"],
+    devolviendo: ["Devolviendo…", "Espera un momento"],
+    devuelto:    ["Dinero devuelto", "La orden quedó cancelada"],
+    fallo:       ["No se pudo devolver", ""]
+  };
+  const [titulo, sub] = (t.modo === "cobro" ? cobroT : devT)[t.estado] || ["", ""];
+
+  fill(texto);
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  textSize(32);
+  text(titulo, 350, TERM_Y + 62);
+  textStyle(NORMAL);
+  fill(textoSecundario);
+  textSize(22);
+  text(t.modo === "cobro" ? "Tarjeta · Mercado Pago" : "Orden #" + t.orden.n + " · Tarjeta", 350, TERM_Y + 106);
+  fill(texto);
+  textStyle(BOLD);
+  textSize(54);
+  text("$" + formato(t.total), 350, TERM_Y + 162);
+  textStyle(NORMAL);
+
+  // Icono
+  const cx = 350, cy = TERM_Y + 285;
+  const ok = t.estado === "aprobado" || t.estado === "devuelto";
+  const mal = t.estado === "fallo";
+  const gira = ["enviando", "esperando", "cancelando", "devolviendo"].indexOf(t.estado) >= 0;
+  if (gira) {
+    noFill();
+    stroke(borde); strokeWeight(10);
+    ellipse(cx, cy, 104, 104);
+    stroke(t.estado === "cancelando" ? rojo : color('#6F5BA8'));
+    strokeCap(ROUND);
+    const a = (millis() / 420) % TWO_PI;
+    arc(cx, cy, 104, 104, a, a + 1.9);
+    noStroke();
+  } else {
+    fill(ok ? color('#3A8F5C') : mal ? rojo : color('#9AA09A'));
+    ellipse(cx, cy, 112, 112);
+    stroke(blanco); strokeWeight(11); strokeCap(ROUND);
+    if (ok) { line(cx - 26, cy + 2, cx - 7, cy + 21); line(cx - 7, cy + 21, cx + 28, cy - 18); }
+    else if (mal) { line(cx - 21, cy - 21, cx + 21, cy + 21); line(cx + 21, cy - 21, cx - 21, cy + 21); }
+    else { line(cx, cy - 26, cx, cy + 6); point(cx, cy + 26); }
+    noStroke();
+  }
+
+  // Mensaje
+  fill(mal ? rojo : textoSecundario);
+  textSize(25);
+  textAlign(CENTER, TOP);
+  text(mal ? t.msg : sub, 70, TERM_Y + 372, 560, 110);
+  if (t.red && !mal) {
+    fill(rojo);
+    textSize(21);
+    text("Sin internet · sigo revisando…", 70, TERM_Y + 450, 560, 40);
+  }
+  textAlign(CENTER, CENTER);
+
+  for (const b of botonesTerm()) {
+    fill(0, 20);
+    rect(b.x, b.y + 5, b.w, b.h, 24);
+    fill(b.col);
+    rect(b.x, b.y, b.w, b.h, 24);
+    fill(b.tx || blanco);
+    textStyle(BOLD);
+    textSize(b.w > 400 ? 31 : 28);
+    text(b.etq, b.x + b.w / 2, b.y + b.h / 2);
+    textStyle(NORMAL);
+  }
+
+  if (t.modo === "cobro" && t.estado === "sinconfig") {
+    fill(textoSecundario);
+    textSize(21);
+    text("“Tarjeta a mano” registra la orden sin la terminal", 350, TERM_Y + 650);
+  }
+  textAlign(LEFT, CENTER);
+}
+
+function pressTerm(mx, my) {
+  if (!term) return;
+  if ((term.estado === "aprobado" || term.estado === "devuelto") && term.hasta) { term.hasta = 0; cerrarTermSiToca(); return; }
+  for (const b of botonesTerm()) {
+    if (!enRect(mx, my, b)) continue;
+    if (b.acc === "cancelar")   cancelarCobroMP();
+    if (b.acc === "reintentar") reintentarMP();
+    if (b.acc === "otro")       otroPagoMP();
+    if (b.acc === "manual")     { term = null; ordenar("tarjeta"); }
+    if (b.acc === "devolver")   devolverMP();
+    if (b.acc === "cerrar")     term = null;
+    return;
   }
 }
 
@@ -2510,7 +2874,11 @@ function pantallaCaja() {
   let y = 165;
   const filas = PAGOS.map(p => [p[1], d.v[p[0]], p[2]]);
   if (d.v.sinDato > 0) filas.push(["Sin forma de pago", d.v.sinDato, '#9AA09A']);
-  const alto = 92 + filas.length * 54 + 70;
+  // Cobros con tarjeta que confirmo la terminal Mercado Pago
+  const conTarjeta = ordenesDelDia().filter(o => o.pago === "tarjeta");
+  const conTerminal = conTarjeta.filter(o => o.mp).length;
+  const extraMP = conTarjeta.length ? 50 : 0;
+  const alto = 92 + filas.length * 54 + 70 + extraMP;
   tarjeta(30, y, 640, alto);
   fill(textoSecundario);
   textSize(20);
@@ -2537,6 +2905,14 @@ function pantallaCaja() {
   text("$" + formato(d.v.total), 640, yt + 18);
   textAlign(LEFT, CENTER);
   textStyle(NORMAL);
+  if (conTarjeta.length) {
+    const todas = conTerminal === conTarjeta.length;
+    fill(todas ? color('#2F7A4D') : textoSecundario);
+    textSize(21);
+    text((todas ? "✓ " : "") + conTerminal + " de " + conTarjeta.length +
+         (conTarjeta.length === 1 ? " cobro con tarjeta confirmado" : " cobros con tarjeta confirmados") +
+         " por la terminal", 60, yt + 64);
+  }
   y += alto + 20;
 
   // ---------- Lo que hay en la caja ----------

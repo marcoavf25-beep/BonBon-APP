@@ -105,7 +105,6 @@ let lienzo = null;
 let pantallaPrevia = -1;
 let zonaSegura = { arriba: 0, abajo: 0 };
 let barraTexto = "";
-let cajaPorMostrar = null;      // casilla que hay que dejar a la vista arriba del teclado
 let mantenerOrdenar = false;    // al agregar postres, que ORDENAR no quede escondido
 let aviso = { t: "", hasta: 0 };   // mensaje corto en rojo (por ejemplo "Carlota está agotado")
 let destelloRojo = new Array(20).fill(-9999);
@@ -120,8 +119,9 @@ const VERDE_OPERATIVA = '#2F7A4D';   // valor de la utilidad operativa cuando es
 let fondo, blanco, texto, textoSecundario, verde, verdeHover, borde, rojo, rojoHover;
 
 // ---------- PANTALLAS ----------
-// 0 = inicio | 1 = captura | 2 = resultados | 3 = punto de venta | 4 = orden final
+// 0 = inicio | 2 = resumen del cierre | 3 = punto de venta | 4 = orden final
 // 5 = estadisticas | 6 = recetas | 7 = historial del punto de venta | 8 = toppings
+// 9 = herramientas | 10 = cuadre de caja | 11 = produccion | 12 = lista de compras | 13 = merma
 let pantalla = 0;
 
 // ---------- GASTOS FIJOS DEL DIA ----------
@@ -198,10 +198,6 @@ const NOMBRES_TILE = [
   ["Vasito", "Botanero"]
 ];
 
-// ---------- CAJAS DE CAPTURA ----------
-// Orden: inventario0, restante0, inventario1, restante1, ...
-let cajas = [];
-let activeBoxIndex = -1;
 
 // ---------- RESULTADOS ----------
 // Ultimo lugar = Fresas con Crema (solo se vende en Punto de Venta)
@@ -219,19 +215,15 @@ let profitLibre = 0;        // pagando al empleado
 let profitSinEmpleado = 0;  // si vendiste tu
 let postreMasVendido = "-";
 let cantidadMayor = 0;
-let origenResumen = 1;      // a donde regresa la flecha: 1 conteo | 3 punto de venta
-let subtituloResumen = "Conteo, venta y ganancia";
+let origenResumen = 3;      // el resumen solo sale del Cierre con Punto de Venta
+let subtituloResumen = "Punto de Venta";
+let pagosCierre = { efectivo: 0, transferencia: 0, tarjeta: 0, sinDato: 0, total: 0 };
 
 // ---------- BOTONES ----------
-let botonEst, botonRec;
-let botonInicio, botonPV, botonCierrePV, botonCalcular, botonAtras, botonBorrar;
-let teclas = [];
-let botonSiguiente, botonCerrarTeclado;
-const TEC_Y = 810;
+let botonHerr, botonPV, botonCierre, botonAtras;
 
 // Confirmaciones de doble toque (guardan el momento del primer toque)
 const SIN_CONFIRMAR = -1e9;
-let confirmarBorrar = SIN_CONFIRMAR;
 let confirmarVaciar = SIN_CONFIRMAR;
 let confirmarCancelar = SIN_CONFIRMAR;
 const TIEMPO_CONFIRMAR = 3000;
@@ -259,7 +251,7 @@ let hist = { pagina: 0, zonas: [], botones: {} };
 const HIST_POR_PAGINA = 15;
 
 // Hasta donde llega el contenido de cada ventana de abajo (para pegarla al borde de la pantalla)
-const TEC_FIN = 1555, MF_FIN = 1455, PIN_FIN = 1600;
+const MF_FIN = 1455, PIN_FIN = 1600;
 
 // Medidas de la ventana de fresas
 const MF_Y = 520;
@@ -276,7 +268,7 @@ let ofNueva = { x: 30, y: 1450, w: 640, h: 110 };
 // Se guarda cifrado (SHA-256), no el PIN tal cual
 const PIN_DUENO_HASH = "3b1e53716e25c357d144145ae01cd61d5b32042ea2e94273791e661fb571159f";
 let pinDueno = null;      // null = cerrado | texto mientras se escribe
-let pinModo = "dueno";    // dueno (Conteo) | estad (Estadisticas) | reinicio (Vendido hoy)
+let pinModo = "estad";    // una herramienta (estad, recetas, caja, prod, compras, merma) | reinicio (Vendido hoy)
 // PIN de registro (el mismo del Sheet) para reiniciar "Vendido hoy"
 const PIN_REGISTRO_HASH = "5615348358de89c7572c2663ccfa4dbcf90d24b37e8aea9d7fbb7da3b272d217";
 let pinError = "";
@@ -324,31 +316,18 @@ function setup() {
   rojo            = color('#C20034');
   rojoHover       = color('#D61A4C');
 
-  // Dos cajas por producto
-  for (let i = 0; i < N; i++) {
-    let y = 295 + i * 118;
-    cajas.push(new TextBox(360, y, 140, 78, i, "inv"));
-    cajas.push(new TextBox(515, y, 140, 78, i, "uni"));
-  }
-
-  botonInicio = new BigButton(50, 208, 600, 150,
-    "Conteo Postres", "Solo dueño · inventario y ganancia", verde, verdeHover);
-  botonPV = new BigButton(50, 374, 600, 150,
+  botonHerr = new BigButton(50, 214, 600, 180,
+    "Herramientas", "Estadísticas, recetas, caja, producción…", verde, verdeHover);
+  botonPV = new BigButton(50, 414, 600, 180,
     "Punto de Venta", "Registra cada orden del día", rojo, rojoHover);
-  botonEst = new BigButton(50, 540, 600, 150,
-    "Estadísticas", "Solo dueño · gráficas de lo vendido", color(AZUL), color(AZUL_HOVER));
-  botonRec = new BigButton(50, 706, 600, 150,
-    "Recetas", "Solo dueño · ingredientes y costos", color(AMARILLO), color(AMARILLO_HOVER), color(TEXTO_AMARILLO));
-  botonCierrePV = { x: 50, y: 874, w: 600, h: 124,
-    isOver(mx, my) { return enRect(mx, my, this); } };
+  botonCierre = new BigButton(50, 614, 600, 180,
+    "Cierre con PDV", "Resumen del día y registro", color(AZUL), color(AZUL_HOVER));
 
-  botonCalcular = new Button(60, 1428, 580, 100, "CALCULAR", 31);
   botonAtras    = new Button(40, 52, 92, 76, "←", 30);
-  botonBorrar   = { x: 578, y: 52, w: 92, h: 76 };
 
-  botonDiaAntes   = new Button(30,  1610, 100, 116, "‹", 46);
-  botonRegistrar  = new Button(145, 1610, 410, 116, "REGISTRAR", 30);
-  botonDiaDespues = new Button(570, 1610, 100, 116, "›", 46);
+  botonDiaAntes   = new Button(30,  1750, 100, 116, "‹", 46);
+  botonRegistrar  = new Button(145, 1750, 410, 116, "REGISTRAR", 30);
+  botonDiaDespues = new Button(570, 1750, 100, 116, "›", 46);
 
   // Botones del Punto de Venta (3 por renglon)
   // ref: numero de postre, N = Fresas, -1 = producto futuro ("?")
@@ -358,8 +337,8 @@ function setup() {
     tiles.push({ x: xs[k % 3], y: 156 + Math.floor(k / 3) * 176, w: 202, h: 162, ref: ref });
   });
 
-  construirTeclado();
   construirTecladoPin();
+  construirTecladoNum();
   revisarFaceId();
   cargarPV();
   cargarEstadisticasGuardadas();
@@ -388,8 +367,7 @@ function medirEscala() {
 function ajustarLienzo() {
   medirEscala();
   const vistaAlto = (window.innerHeight - zonaSegura.arriba - zonaSegura.abajo) / escala;
-  const extra = tecladoAbierto() ? (TEC_FIN - TEC_Y) : 0;   // para poder subir la casilla sobre el teclado
-  const alto = Math.ceil(Math.max(OFFSET_Y + altoContenido + barraAlto + extra, vistaAlto));
+  const alto = Math.ceil(Math.max(OFFSET_Y + altoContenido + barraAlto, vistaAlto));
   if (alto !== altoLienzo) { resizeCanvas(BASE_W, alto); altoLienzo = alto; }
   const w = (BASE_W * escala) + "px", h = (altoLienzo * escala) + "px";
   if (lienzo.style.width !== w)  lienzo.style.width = w;
@@ -403,20 +381,8 @@ function finVisible() {
 }
 
 // Si una casilla queda tapada por el teclado, se desliza la pantalla para verla
-function asegurarVisible(c) {
-  if (!lienzo) return;
-  const r = lienzo.getBoundingClientRect();
-  const arriba = zonaSegura.arriba + 10;
-  const tecladoArriba = window.innerHeight - zonaSegura.abajo - (TEC_FIN - TEC_Y) * escala;
-  const yArriba = r.top + (c.y + OFFSET_Y) * escala;
-  const yAbajo  = r.top + (c.y + c.h + OFFSET_Y) * escala;
-  if (yArriba < arriba || yAbajo > tecladoArriba - 10) {
-    const centro = arriba + (tecladoArriba - arriba) / 2;
-    window.scrollBy(0, (yArriba + yAbajo) / 2 - centro);
-  }
-}
 
-// Toques: un toque corto es "picar"; si el dedo se mueve, es deslizar la pantalla
+
 function prepararToques() {
   let toque = null;
   lienzo.addEventListener("pointerdown", e => {
@@ -437,7 +403,8 @@ function prepararToques() {
 // Ventana que esta abierta encima (teclado, PIN o fresas)
 function overlayActual() {
   if (pinDueno !== null)              return { fin: PIN_FIN, dibujar: dibujarPinDueno,    press: pressPinDueno };
-  if (tecladoAbierto())               return { fin: TEC_FIN, dibujar: dibujarTeclado,     press: pressTeclado };
+  if (numEntrada)                     return { fin: NUM_FIN, dibujar: dibujarNumero,      press: pressNumero };
+  if (pantalla === 3 && cobro)        return { fin: PAGO_FIN, dibujar: dibujarCobro,      press: pressCobro };
   if (pantalla === 3 && modalFresas)  return { fin: MF_FIN,  dibujar: dibujarModalFresas, press: pressModalFresas };
   return null;
 }
@@ -456,14 +423,18 @@ function draw() {
   translate(0, OFFSET_Y);
 
   if (pantalla === 0)      pantallaInicio();
-  else if (pantalla === 1) pantallaCaptura();
   else if (pantalla === 2) pantallaResultados();
   else if (pantalla === 3) pantallaPV();
   else if (pantalla === 4) pantallaOrden();
   else if (pantalla === 5) pantallaEstadisticas();
   else if (pantalla === 6) pantallaRecetas();
   else if (pantalla === 7) pantallaHistorial();
-  else                     pantallaToppings();
+  else if (pantalla === 8) pantallaToppings();
+  else if (pantalla === 9) pantallaHerramientas();
+  else if (pantalla === 10) pantallaCaja();
+  else if (pantalla === 11) pantallaProduccion();
+  else if (pantalla === 12) pantallaCompras();
+  else                     pantallaMerma();
 
   // Las ventanas de abajo se pegan al borde de lo que se ve
   const ov = overlayActual();
@@ -483,10 +454,9 @@ function draw() {
   const ta = ov ? "none" : "pan-y";
   if (lienzo.style.touchAction !== ta) lienzo.style.touchAction = ta;
 
-  actualizarBarra(!ov && pantalla !== 2 && pantalla !== 5 && pantalla !== 6 && pantalla !== 8);
+  actualizarBarra(!ov && [0, 3, 4, 7].includes(pantalla));
   ajustarLienzo();
 
-  if (cajaPorMostrar) { asegurarVisible(cajaPorMostrar); cajaPorMostrar = null; }
   if (mantenerOrdenar) { mostrarOrdenar(); mantenerOrdenar = false; }
 }
 
@@ -514,142 +484,15 @@ function pantallaInicio() {
     drawingContext.drawImage(iso, 350 - w / 2, 30, w, h);
   }
 
-  textAlign(LEFT, CENTER);
-  botonInicio.display();
-  botonPV.display();
-  botonEst.display();
-  botonRec.display();
-
-  // Cierre con las ventas del Punto de Venta
-  const b = botonCierrePV;
   const t = totalesPV();
-  noStroke();
-  fill(0, 14);
-  rect(b.x, b.y + 5, b.w, b.h, 26);
-  fill(blanco);
-  rect(b.x, b.y, b.w, b.h, 26);
-  fill(texto);
+  botonCierre.sublabel = t.ordenes + (t.ordenes === 1 ? " orden hoy" : " órdenes hoy") + " · resumen y registro";
+
   textAlign(LEFT, CENTER);
-  textSize(31);
-  text("Cierre con Punto de Venta", b.x + 42, b.y + 43);
-  fill(textoSecundario);
-  textSize(24);
-  text(t.ordenes + (t.ordenes === 1 ? " orden hoy" : " órdenes hoy") +
-       " · resumen y registro", b.x + 42, b.y + 86);
-  textAlign(RIGHT, CENTER);
-  textSize(36);
-  text("→", b.x + b.w - 40, b.y + b.h / 2);
+  botonHerr.display();
+  botonPV.display();
+  botonCierre.display();
 
-  fill(textoSecundario);
-  textAlign(CENTER, CENTER);
-  textSize(23);
-  text("Costos al día con tu hoja Recetas", 350, 1040);
-  textAlign(LEFT, CENTER);
-
-  altoContenido = 1075;
-}
-
-// ============================================================
-// PANTALLA 1 - CAPTURA
-// ============================================================
-
-function pantallaCaptura() {
-
-  botonAtras.display();
-
-  fill(texto);
-  textAlign(LEFT, CENTER);
-  textSize(44);
-  text("Conteo Postres", 158, 80);
-
-  const confirmando = millis() - confirmarBorrar < TIEMPO_CONFIRMAR;
-  if (confirmando) {
-    fill(rojo);
-    textSize(26);
-    text("Toca otra vez para borrar todo", 160, 128);
-  } else {
-    fill(textoSecundario);
-    textSize(26);
-    text("Inventario y lo que quedó", 160, 128);
-  }
-
-  // Boton para borrar todas las casillas
-  const b = botonBorrar;
-  noStroke();
-  fill(0, 16);
-  rect(b.x, b.y + 5, b.w, b.h, 20);
-  fill(confirmando ? rojo : color('#FBE5EA'));
-  rect(b.x, b.y, b.w, b.h, 20);
-  dibujarIconoBasura(b.x + b.w / 2, b.y + b.h / 2 + 2, confirmando ? blanco : rojo);
-
-  fill(blanco);
-  noStroke();
-  rect(30, 195, 640, 1060 + (N - 8) * 118, 26);
-
-  // Encabezados de columna
-  fill(textoSecundario);
-  textSize(24);
-  text("POSTRE", 55, 243);
-  textAlign(CENTER, CENTER);
-  text("INVENTARIO", 430, 243);
-  text("UNIDADES", 585, 243);
-  textAlign(LEFT, CENTER);
-
-  stroke(borde);
-  strokeWeight(2);
-  line(55, 272, 645, 272);
-  noStroke();
-
-  for (let i = 0; i < N; i++) {
-    let y = 295 + i * 118;
-
-    fill(texto);
-    textSize(29);
-    text(postres[i], 55, y + 26);
-
-    fill(textoSecundario);
-    textSize(24);
-    text("$" + formato(precios[i]), 55, y + 56);
-  }
-
-  for (const c of cajas) c.display();
-
-  botonCalcular.display();
-
-  fill(textoSecundario);
-  textAlign(CENTER, CENTER);
-  textSize(24);
-  text("INVENTARIO = con los que abriste", 350, 1593);
-  text("UNIDADES = los que quedaron", 350, 1630);
-  textAlign(LEFT, CENTER);
-
-  altoContenido = 1670;
-
-}
-
-function dibujarIconoBasura(cx, cy, col) {
-  noFill();
-  stroke(col);
-  strokeWeight(4);
-  line(cx - 19, cy - 14, cx + 19, cy - 14);     // tapa
-  line(cx - 7,  cy - 21, cx + 7,  cy - 21);     // asa
-  line(cx - 7,  cy - 21, cx - 7,  cy - 14);
-  line(cx + 7,  cy - 21, cx + 7,  cy - 14);
-  rect(cx - 14, cy - 9, 28, 31, 4);             // bote
-  line(cx - 5, cy - 2, cx - 5, cy + 15);
-  line(cx + 5, cy - 2, cx + 5, cy + 15);
-  noStroke();
-}
-
-function pressBorrarTodo() {
-  if (millis() - confirmarBorrar < TIEMPO_CONFIRMAR) {
-    for (const c of cajas) c.text = "";
-    cerrarTeclado();
-    confirmarBorrar = SIN_CONFIRMAR;
-  } else {
-    cerrarTeclado();
-    confirmarBorrar = millis();
-  }
+  altoContenido = 830;
 }
 
 // ============================================================
@@ -791,8 +634,28 @@ function pantallaResultados() {
   textSize(42);
   text("$" + formato(profitSinEmpleado), 65, 1546);
 
+  // ---------- Como pagaron ----------
+  fill(blanco);
+  rect(30, 1600, 640, 128, 26);
+  fill(textoSecundario);
+  textSize(19);
+  text("CÓMO PAGARON", 65, 1636);
+  PAGOS.forEach(([k, etq, col], i) => {
+    const x = 65 + i * 200;
+    fill(col);
+    ellipse(x + 7, 1684, 12, 12);
+    fill(textoSecundario);
+    textSize(19);
+    text(etq, x + 22, 1672);
+    fill(texto);
+    textStyle(BOLD);
+    textSize(26);
+    text("$" + miles(pagosCierre[k]), x + 22, 1702);
+    textStyle(NORMAL);
+  });
+
   dibujarRegistro();
-  altoContenido = 1755;
+  altoContenido = 1900;
 }
 
 // ============================================================
@@ -921,6 +784,7 @@ async function registrar() {
     profitSinEmpleado: profitSinEmpleado,
     postres: postres.slice(),
     vendidos: vendidos.slice(0, N),
+    pagos: pagosCierre,
     fresasChicas: fresasChicas,
     fresasGrandes: fresasGrandes
   };
@@ -1560,10 +1424,10 @@ function pressPV(mx, my) {
     }
   }
 
-  if (pv.carrito.length && enRect(mx, my, pvOrdenar)) ordenar();
+  if (pv.carrito.length && enRect(mx, my, pvOrdenar)) cobro = { total: totalItems(pv.carrito) };
 }
 
-function ordenar() {
+function ordenar(pago) {
   if (!pv.carrito.length) return;
   const items = JSON.parse(JSON.stringify(pv.carrito));
   asegurarDia();
@@ -1579,7 +1443,8 @@ function ordenar() {
     items: items,
     total: total,
     costo: costo,
-    comision: total * COMISION_EMPLEADO
+    comision: total * COMISION_EMPLEADO,
+    pago: pago || "efectivo"
   };
   pv.siguiente++;
   pv.ordenes.push(orden);
@@ -1589,7 +1454,7 @@ function ordenar() {
   const piezas = piezasDe(items);
   pv.pendientes.push({
     tipo: "orden", id: orden.id, fecha: pv.fecha, n: orden.n, hora: orden.hora,
-    piezas: piezas, total: total, detalle: textoDetalle(items)
+    piezas: piezas, total: total, detalle: textoDetalle(items), pago: orden.pago
   });
   moverStockLocal(piezas, -1);
   guardarPV();
@@ -1804,7 +1669,7 @@ function pantallaOrden() {
   text("Orden #" + o.n, 158, 80);
   fill(textoSecundario);
   textSize(26);
-  text("Registrada a las " + o.hora, 160, 128);
+  text(o.hora + (o.pago ? " · " + NOMBRE_PAGO[o.pago] : ""), 160, 128);
 
   // Cancelar orden (doble toque)
   const c = OF_CANCELAR;
@@ -2090,7 +1955,7 @@ function tarjetaHistorial(o, y) {
   textStyle(NORMAL);
   fill(textoSecundario);
   textSize(23);
-  text("  ·  " + o.hora, 60 + w, y + 41);
+  text("  ·  " + o.hora + (o.pago ? " · " + NOMBRE_PAGO[o.pago] : ""), 60 + w, y + 41);
   fill(texto);
   textAlign(RIGHT, CENTER);
   textStyle(BOLD);
@@ -2383,6 +2248,1008 @@ function pressToppings(mx, my) {
 }
 
 // ============================================================
+// TECLADO NUMERICO (para fondo de caja y efectivo contado)
+// ============================================================
+
+let numEntrada = null;           // { titulo, sub, texto, listo(valor) }
+let numTeclas = [];
+const NUM_Y = 690, NUM_FIN = 1525;
+const NUM_LISTO = { x: 50, y: 1395, w: 600, h: 100 };
+
+function construirTecladoNum() {
+  const labels = [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"], [".", "0", "<"]];
+  const xs = [50, 255, 460];
+  const ys = [995, 1090, 1185, 1280];
+  numTeclas = [];
+  for (let r = 0; r < 4; r++)
+    for (let c = 0; c < 3; c++)
+      numTeclas.push({ label: labels[r][c], x: xs[c], y: ys[r], w: 190, h: 82 });
+}
+
+function pedirNumero(titulo, sub, valor, listo) {
+  numEntrada = { titulo: titulo, sub: sub, texto: valor ? String(Math.round(valor * 100) / 100) : "", listo: listo };
+}
+
+function escribirNum(t) {
+  const e = numEntrada;
+  if (t === "<") { e.texto = e.texto.slice(0, -1); return; }
+  if (t === "." && e.texto.includes(".")) return;
+  if (e.texto.length >= 8) return;
+  e.texto += t;
+}
+
+function terminarNumero() {
+  const e = numEntrada;
+  numEntrada = null;
+  e.listo(parseFloat(e.texto) || 0);
+}
+
+function dibujarNumero() {
+  const e = numEntrada;
+  noStroke();
+  fill(0, 115);
+  rect(0, -OFFSET_Y - dyOverlay - 10, BASE_W, NUM_Y + OFFSET_Y + dyOverlay + 10);
+  fill(blanco);
+  rect(-20, NUM_Y, BASE_W + 40, 4000, 30);
+
+  fill(texto);
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  textSize(32);
+  text(e.titulo, 350, NUM_Y + 65);
+  textStyle(NORMAL);
+  fill(textoSecundario);
+  textSize(21);
+  text(e.sub, 350, NUM_Y + 105);
+
+  fill(e.texto ? texto : color('#B4B9B4'));
+  textStyle(BOLD);
+  textSize(60);
+  text("$" + (e.texto || "0"), 350, NUM_Y + 195);
+  textStyle(NORMAL);
+
+  for (const t of numTeclas) {
+    noStroke();
+    fill('#F2F4F2');
+    rect(t.x, t.y, t.w, t.h, 18);
+    if (t.label === "<") { fill(textoSecundario); textSize(40); text("←", t.x + t.w / 2, t.y + t.h / 2); }
+    else { fill(texto); textSize(38); text(t.label, t.x + t.w / 2, t.y + t.h / 2); }
+  }
+  const b = NUM_LISTO;
+  fill(verde);
+  rect(b.x, b.y, b.w, b.h, 20);
+  fill(blanco);
+  textSize(31);
+  text("LISTO", b.x + b.w / 2, b.y + b.h / 2);
+  textAlign(LEFT, CENTER);
+}
+
+function pressNumero(mx, my) {
+  if (my < NUM_Y) { numEntrada = null; return; }
+  if (enRect(mx, my, NUM_LISTO)) { terminarNumero(); return; }
+  for (const t of numTeclas) if (enRect(mx, my, t)) { escribirNum(t.label); return; }
+}
+
+// ============================================================
+// FORMA DE PAGO (al tocar ORDENAR)
+// ============================================================
+
+const PAGOS = [
+  ["efectivo", "Efectivo", '#3A8F5C'],
+  ["transferencia", "Transferencia", '#2E86C1'],
+  ["tarjeta", "Tarjeta", '#6F5BA8']
+];
+const NOMBRE_PAGO = { efectivo: "Efectivo", transferencia: "Transferencia", tarjeta: "Tarjeta" };
+let cobro = null;                // { total } mientras se elige como pago
+const PAGO_Y = 800, PAGO_FIN = 1495;
+
+function botonesPago() {
+  return PAGOS.map((p, k) => ({ x: 50, y: PAGO_Y + 205 + k * 122, w: 600, h: 106, pago: p[0], etq: p[1], col: p[2] }));
+}
+
+function dibujarCobro() {
+  noStroke();
+  fill(0, 115);
+  rect(0, -OFFSET_Y - dyOverlay - 10, BASE_W, PAGO_Y + OFFSET_Y + dyOverlay + 10);
+  fill(blanco);
+  rect(-20, PAGO_Y, BASE_W + 40, 4000, 30);
+
+  fill(texto);
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  textSize(32);
+  text("¿Cómo pagó?", 350, PAGO_Y + 62);
+  textStyle(NORMAL);
+  fill(textoSecundario);
+  textSize(22);
+  text("Total de la orden", 350, PAGO_Y + 108);
+  fill(texto);
+  textStyle(BOLD);
+  textSize(48);
+  text("$" + formato(cobro.total), 350, PAGO_Y + 158);
+  textStyle(NORMAL);
+
+  for (const b of botonesPago()) {
+    fill(0, 20);
+    rect(b.x, b.y + 5, b.w, b.h, 24);
+    fill(b.col);
+    rect(b.x, b.y, b.w, b.h, 24);
+    fill(blanco);
+    textStyle(BOLD);
+    textSize(32);
+    text(b.etq, b.x + b.w / 2, b.y + b.h / 2);
+    textStyle(NORMAL);
+  }
+  fill(textoSecundario);
+  textSize(22);
+  text("Toca arriba para regresar a la orden", 350, PAGO_Y + 205 + 3 * 122 + 20);
+  textAlign(LEFT, CENTER);
+}
+
+function pressCobro(mx, my) {
+  if (my < PAGO_Y) { cobro = null; return; }
+  for (const b of botonesPago()) {
+    if (enRect(mx, my, b)) { cobro = null; ordenar(b.pago); return; }
+  }
+}
+
+// Ventas del dia (despues del ultimo reinicio) por forma de pago
+function ventasPorPago(ordenes) {
+  const t = { efectivo: 0, transferencia: 0, tarjeta: 0, sinDato: 0, total: 0 };
+  for (const o of ordenes) {
+    if (t[o.pago] !== undefined && o.pago !== "sinDato") t[o.pago] += o.total; else t.sinDato += o.total;
+    t.total += o.total;
+  }
+  return t;
+}
+
+function ordenesDelDia() {
+  asegurarDia();
+  return pv.ordenes.filter(o => o.n > (pv.corte || 0));
+}
+
+// ============================================================
+// PANTALLA 9 - HERRAMIENTAS (cada una pide Face ID o PIN de dueño)
+// ============================================================
+
+const HERRAMIENTAS = [
+  ["estad",   "Estadísticas",         "Ventas, utilidades y gráficas",        '#3D93CB'],
+  ["recetas", "Recetas",              "Ingredientes, costos y tiendas",       '#F2C230'],
+  ["caja",    "Cuadre de caja",       "Efectivo, transferencias y tarjeta",   '#4F765F'],
+  ["prod",    "Producción de mañana", "Cuánto preparar de cada postre",       '#5B3F8C'],
+  ["compras", "Lista de compras",     "Qué comprar y en qué tienda",          '#1F6F66'],
+  ["merma",   "Merma y cortesías",    "Postres echados a perder o regalados", '#B4501A']
+];
+let herrZonas = [];
+
+function irAHerramientas() { pantalla = 9; }
+
+function pantallaHerramientas() {
+  botonAtras.display();
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textSize(46);
+  text("Herramientas", 158, 80);
+  fill(textoSecundario);
+  textSize(23);
+  text(faceIdGuardado() ? "Cada una pide Face ID" : "Cada una pide tu PIN de dueño o Face ID", 160, 128);
+
+  herrZonas = [];
+  HERRAMIENTAS.forEach(([modo, titulo, sub, col], k) => {
+    const b = { x: 30, y: 168 + k * 156, w: 640, h: 140, modo: modo };
+    herrZonas.push(b);
+    const oscuro = modo === "recetas";
+    noStroke();
+    fill(0, 20);
+    rect(b.x, b.y + 6, b.w, b.h, 26);
+    fill(col);
+    rect(b.x, b.y, b.w, b.h, 26);
+    fill(oscuro ? color(TEXTO_AMARILLO) : blanco);
+    textAlign(LEFT, CENTER);
+    textSize(37);
+    text(titulo, b.x + 40, b.y + 50);
+    if (oscuro) fill(74, 59, 0, 200); else fill(255, 200);
+    textSize(23);
+    text(sub, b.x + 40, b.y + 98);
+    if (oscuro) fill(74, 59, 0, 150); else fill(255, 160);
+    textAlign(RIGHT, CENTER);
+    textSize(36);
+    text("→", b.x + b.w - 36, b.y + b.h / 2);
+  });
+  textAlign(LEFT, CENTER);
+  altoContenido = 168 + HERRAMIENTAS.length * 156 + 20;
+}
+
+function pressHerramientas(mx, my) {
+  if (botonAtras.isOver(mx, my)) { irAInicio(); return; }
+  for (const z of herrZonas) if (enRect(mx, my, z)) { entrarDueno(z.modo); return; }
+}
+
+// Encabezado comun de las herramientas
+function encabezado(titulo, sub, colSub) {
+  botonAtras.display();
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textSize(titulo.length > 16 ? 40 : 46);
+  text(titulo, 158, 80);
+  fill(colSub || textoSecundario);
+  textSize(23);
+  text(recortar(sub, 510), 160, 128);
+}
+
+function tarjeta(x, y, w, h) {
+  noStroke();
+  fill(blanco);
+  rect(x, y, w, h, 26);
+}
+
+// ============================================================
+// PANTALLA 10 - CUADRE DE CAJA
+// ============================================================
+
+let cajaEstado = { estado: "listo", msg: "" };     // listo | enviando | ok | error
+let cajaZonas = {};
+
+function irACaja() { pantalla = 10; cajaEstado = { estado: "listo", msg: "" }; }
+
+function datosCaja() {
+  if (!pv.caja) pv.caja = { fondo: 0, contado: null };
+  const v = ventasPorPago(ordenesDelDia());
+  const esperado = (pv.caja.fondo || 0) + v.efectivo;
+  const contado = pv.caja.contado;
+  return { v: v, fondo: pv.caja.fondo || 0, esperado: esperado, contado: contado,
+           diferencia: contado === null || contado === undefined ? null : contado - esperado };
+}
+
+function pantallaCaja() {
+  const d = datosCaja();
+  encabezado("Cuadre de caja", textoFecha(fechaDesdeIso(pv.fecha)) + (pv.corte ? " · desde el reinicio" : ""));
+  cajaZonas = {};
+
+  // ---------- Ventas por forma de pago ----------
+  let y = 165;
+  const filas = PAGOS.map(p => [p[1], d.v[p[0]], p[2]]);
+  if (d.v.sinDato > 0) filas.push(["Sin forma de pago", d.v.sinDato, '#9AA09A']);
+  const alto = 92 + filas.length * 54 + 70;
+  tarjeta(30, y, 640, alto);
+  fill(textoSecundario);
+  textSize(20);
+  text("VENTAS DE HOY", 60, y + 44);
+  filas.forEach(([etq, val, col], k) => {
+    const yy = y + 104 + k * 54;
+    fill(col);
+    ellipse(70, yy, 14, 14);
+    fill(texto);
+    textSize(26);
+    textAlign(LEFT, CENTER);
+    text(etq, 90, yy);
+    textAlign(RIGHT, CENTER);
+    text("$" + formato(val), 640, yy);
+    textAlign(LEFT, CENTER);
+  });
+  const yt = y + 92 + filas.length * 54 + 20;
+  stroke(borde); strokeWeight(2); line(60, yt - 14, 640, yt - 14); noStroke();
+  fill(texto);
+  textStyle(BOLD);
+  textSize(27);
+  text("Total", 60, yt + 18);
+  textAlign(RIGHT, CENTER);
+  text("$" + formato(d.v.total), 640, yt + 18);
+  textAlign(LEFT, CENTER);
+  textStyle(NORMAL);
+  y += alto + 20;
+
+  // ---------- Lo que hay en la caja ----------
+  tarjeta(30, y, 640, 250);
+  fill(textoSecundario);
+  textSize(20);
+  text("EN LA CAJA", 60, y + 44);
+  const campos = [
+    ["fondo", "Fondo inicial (cambio)", d.fondo, "Con cuánto abriste la caja"],
+    ["contado", "Efectivo contado", d.contado, "Todo el efectivo que hay ahora"]
+  ];
+  campos.forEach(([k, etq, val, ayuda], i) => {
+    const z = { x: 46, y: y + 72 + i * 86, w: 608, h: 76 };
+    cajaZonas[k] = z;
+    fill('#F5F7F5');
+    rect(z.x, z.y, z.w, z.h, 18);
+    fill(texto);
+    textSize(25);
+    text(etq, z.x + 20, z.y + 26);
+    fill(textoSecundario);
+    textSize(18);
+    text(ayuda, z.x + 20, z.y + 55);
+    textAlign(RIGHT, CENTER);
+    if (val === null || val === undefined) { fill(AZUL); textSize(23); text("Toca para contar", z.x + z.w - 20, z.y + z.h / 2); }
+    else { fill(texto); textStyle(BOLD); textSize(30); text("$" + formato(val), z.x + z.w - 20, z.y + z.h / 2); textStyle(NORMAL); }
+    textAlign(LEFT, CENTER);
+  });
+  y += 270;
+
+  // ---------- Resultado ----------
+  let colRes = textoSecundario, titulo = "Cuenta el efectivo para ver si cuadra";
+  if (d.diferencia !== null) {
+    if (Math.abs(d.diferencia) < 0.5)  { colRes = color(VERDE_OPERATIVA); titulo = "✓ La caja cuadra"; }
+    else if (d.diferencia > 0)          { colRes = color('#2E86C1'); titulo = "Sobran $" + formato(d.diferencia); }
+    else                                { colRes = rojo; titulo = "Faltan $" + formato(-d.diferencia); }
+  }
+  tarjeta(30, y, 640, 220);
+  fill(textoSecundario);
+  textSize(21);
+  text("Debe haber (fondo + ventas en efectivo)", 60, y + 44);
+  textAlign(RIGHT, CENTER);
+  fill(texto);
+  textSize(26);
+  text("$" + formato(d.esperado), 640, y + 44);
+  textAlign(LEFT, CENTER);
+  fill(colRes);
+  textStyle(BOLD);
+  textSize(d.diferencia === null ? 26 : 44);
+  text(titulo, 60, y + 130);
+  textStyle(NORMAL);
+  if (d.v.sinDato > 0) {
+    fill(textoSecundario);
+    textSize(18);
+    text("Las órdenes sin forma de pago no cuentan como efectivo", 60, y + 190);
+  }
+  y += 240;
+
+  // ---------- Guardar ----------
+  const b = { x: 30, y: y, w: 640, h: 110 };
+  cajaZonas.guardar = b;
+  let etq = "GUARDAR CUADRE", col = verde;
+  if (cajaEstado.estado === "enviando") { etq = "GUARDANDO…"; col = color('#8FA898'); }
+  else if (cajaEstado.estado === "ok")  { etq = "✓ GUARDADO EN EL SHEET"; col = color('#2F5A41'); }
+  else if (cajaEstado.estado === "error") { etq = "REINTENTAR · " + cajaEstado.msg; col = rojo; }
+  fill(0, 22);
+  rect(b.x, b.y + 6, b.w, b.h, 24);
+  fill(col);
+  rect(b.x, b.y, b.w, b.h, 24);
+  fill(blanco);
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  textSize(29);
+  text(etq, b.x + b.w / 2, b.y + b.h / 2);
+  textStyle(NORMAL);
+  textAlign(LEFT, CENTER);
+  altoContenido = y + 140;
+}
+
+async function guardarCaja() {
+  if (cajaEstado.estado === "enviando") return;
+  const d = datosCaja();
+  if (d.contado === null || d.contado === undefined) { cajaEstado = { estado: "error", msg: "falta contar" }; return; }
+  let pin = leerPin();
+  if (!pin) {
+    pin = (window.prompt("PIN de registro (solo se pide una vez):") || "").trim();
+    if (!pin) return;
+    guardarPin(pin);
+  }
+  cajaEstado = { estado: "enviando", msg: "" };
+  try {
+    const r = await fetch(SCRIPT_URL, { method: "POST", body: JSON.stringify({
+      pin: pin, accion: "caja", fecha: pv.fecha, fondo: d.fondo, efectivo: d.v.efectivo,
+      esperado: d.esperado, contado: d.contado, diferencia: d.diferencia,
+      transferencia: d.v.transferencia, tarjeta: d.v.tarjeta, total: d.v.total
+    }) });
+    const j = await r.json();
+    if (j.ok) cajaEstado = { estado: "ok", msg: "" };
+    else if (j.error === "PIN") { borrarPin(); cajaEstado = { estado: "error", msg: "PIN" }; }
+    else cajaEstado = { estado: "error", msg: "Sheet" };
+  } catch (e) {
+    cajaEstado = { estado: "error", msg: "sin internet" };
+  }
+}
+
+function pressCaja(mx, my) {
+  if (botonAtras.isOver(mx, my)) { irAHerramientas(); return; }
+  const z = cajaZonas;
+  if (z.fondo && enRect(mx, my, z.fondo)) {
+    pedirNumero("Fondo inicial", "Con cuánto cambio abriste la caja", pv.caja.fondo,
+                v => { pv.caja.fondo = v; guardarPV(); cajaEstado.estado = "listo"; });
+    return;
+  }
+  if (z.contado && enRect(mx, my, z.contado)) {
+    pedirNumero("Efectivo contado", "Cuenta todo el efectivo de la caja", pv.caja.contado,
+                v => { pv.caja.contado = v; guardarPV(); cajaEstado.estado = "listo"; });
+    return;
+  }
+  if (z.guardar && enRect(mx, my, z.guardar)) guardarCaja();
+}
+
+// ============================================================
+// PANTALLA 11 - PRODUCCION DE MAÑANA
+// Promedio vendido ese dia de la semana (+15%) menos lo que hay en el refri
+// ============================================================
+
+const DIAS_LARGO = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+const EXTRA_PRODUCCION = 1.15;
+let prod = { fecha: null, ajustes: {} };
+let prodZonas = { filas: [], ant: null, sig: null, compras: null, reset: null };
+
+function mananaOperativa() {
+  const d = fechaPorDefecto();
+  d.setDate(d.getDate() + 1);
+  return d;
+}
+
+function irAProduccion() {
+  if (!prod.fecha) prod.fecha = mananaOperativa();
+  pantalla = 11;
+  if (!est.datos) cargarEstadisticas();
+  if (!rec.datos) cargarRecetas(true);
+  sincronizar(false);
+}
+
+function recetaDe(k) {
+  if (!rec.datos) return null;
+  return rec.datos.productos.find(p => productoDeReceta(p.nombre) === k) || null;
+}
+
+function calcularPlan() {
+  if (!prod.fecha) prod.fecha = mananaOperativa();
+  const w = prod.fecha.getDay();
+  const dias = (est.datos && est.datos.dias) || [];
+  const mismos = dias.filter(x => fechaDesdeIso(x.f).getDay() === w);
+  const base = mismos.length ? mismos : dias;
+  const prom = f => base.length ? base.reduce((a, x) => a + f(x), 0) / base.length : 0;
+
+  const items = [];
+  for (let k = 0; k < N; k++) {
+    items.push({ clave: "p" + k, nombre: postres[k], k: k, prom: prom(x => (x.c || [])[k] || 0),
+                 stock: stockDe(postres[k]), receta: recetaDe(k), fresas: false });
+  }
+  // Fresas en porciones (chicas = 1, grandes = 1.5), igual que el inventario
+  items.push({ clave: "fresas", nombre: "Fresas con Crema", k: "fresas",
+               prom: prom(x => (x.fc || 0) + FRESAS.grandes.porcion * (x.fg || 0)),
+               stock: stockDe("Fresas"), receta: recetaDe("chicas"), fresas: true });
+
+  for (const it of items) {
+    it.sugerido = Math.max(0, Math.ceil(it.prom * EXTRA_PRODUCCION - (it.stock || 0)));
+    it.valor = prod.ajustes[it.clave] !== undefined ? prod.ajustes[it.clave] : it.sugerido;
+    const rinde = it.receta && it.receta.rinde > 0 ? it.receta.rinde : null;
+    it.tandas = rinde ? (it.fresas ? it.valor / rinde : Math.ceil(it.valor / rinde)) : null;
+    it.costo = it.valor * (it.fresas ? FRESAS.chicas.costo : costos[it.k]);
+  }
+  return { items: items, dia: w, nMismos: mismos.length, nBase: base.length };
+}
+
+function pantallaProduccion() {
+  const plan = calcularPlan();
+  let sub = "Cuánto preparar de cada postre", colSub = textoSecundario;
+  if (est.cargando || rec.cargando) sub = "Actualizando…";
+  else if (est.error) { sub = est.error; colSub = rojo; }
+  encabezado("Producción", sub, colSub);
+
+  // Dia elegido
+  const ant = { x: 30, y: 160, w: 90, h: 72 }, sig = { x: 580, y: 160, w: 90, h: 72 };
+  prodZonas = { filas: [], ant: ant, sig: sig };
+  fill('#E9E1F5');
+  rect(ant.x, ant.y, ant.w, ant.h, 36);
+  rect(sig.x, sig.y, sig.w, sig.h, 36);
+  fill('#5B3F8C');
+  rect(132, 160, 436, 72, 36);
+  fill('#5B3F8C');
+  textAlign(CENTER, CENTER);
+  textSize(40);
+  text("‹", ant.x + ant.w / 2, ant.y + ant.h / 2 - 3);
+  text("›", sig.x + sig.w / 2, sig.y + sig.h / 2 - 3);
+  fill(blanco);
+  textSize(27);
+  text(DIAS_LARGO[plan.dia].charAt(0).toUpperCase() + DIAS_LARGO[plan.dia].slice(1) + " " +
+       prod.fecha.getDate() + " " + MESES[prod.fecha.getMonth()], 350, 196);
+  textAlign(LEFT, CENTER);
+
+  fill(textoSecundario);
+  textSize(20);
+  const plural = { sábado: "sábados", domingo: "domingos" }[DIAS_LARGO[plan.dia]] || DIAS_LARGO[plan.dia];
+  const nota = plan.nMismos
+    ? "Promedio de los " + plural + " (" + plan.nMismos + " registrados) + 15% − lo del refri"
+    : (plan.nBase ? "Sin " + plural + " registrados: promedio de todos los días + 15%" : "Aún no hay días registrados");
+  text(recortar(nota, 640), 32, 262);
+
+  // Encabezados
+  let y = 290;
+  const alto = 70 + plan.items.length * 96 + 10;
+  tarjeta(30, y, 640, alto);
+  fill(textoSecundario);
+  textSize(18);
+  text("POSTRE", 56, y + 38);
+  textAlign(RIGHT, CENTER);
+  text("VENDES", 372, y + 38);
+  text("HAY", 450, y + 38);
+  textAlign(CENTER, CENTER);
+  text("PREPARA", 580, y + 38);
+  textAlign(LEFT, CENTER);
+
+  plan.items.forEach((it, i) => {
+    const yy = y + 108 + i * 96;
+    const col = it.fresas ? rojo : color(COLORES_PV[it.k][1]);
+    fill(col);
+    ellipse(64, yy - 10, 13, 13);
+    fill(texto);
+    textSize(24);
+    text(recortar(it.nombre, 250), 80, yy - 12);
+    fill(textoSecundario);
+    textSize(18);
+    let detalle = "sin receta en la hoja";
+    if (it.fresas && it.receta) detalle = "≈ " + (Math.round(it.valor / it.receta.rinde * 10) / 10) + " kg de fresa";
+    else if (it.receta) detalle = it.tandas + (it.tandas === 1 ? " receta" : " recetas") + " · rinde " + it.receta.rinde;
+    if (!it.valor) detalle = "no hace falta";
+    text(detalle, 80, yy + 18);
+
+    textAlign(RIGHT, CENTER);
+    fill(texto);
+    textSize(24);
+    text(Math.round(it.prom * 10) / 10, 372, yy);
+    fill(it.stock === null ? color('#B4B9B4') : texto);
+    text(it.stock === null ? "–" : cantidadTexto(it.stock), 450, yy);
+    textAlign(LEFT, CENTER);
+
+    // - valor +
+    const menos = { x: 482, y: yy - 30, w: 60, h: 60, clave: it.clave, d: -1, it: it };
+    const mas   = { x: 618, y: yy - 30, w: 60, h: 60, clave: it.clave, d: +1, it: it };
+    prodZonas.filas.push(menos, mas);
+    fill('#F2F4F2');
+    ellipse(512, yy, 50, 50);
+    ellipse(648, yy, 50, 50);
+    fill(textoSecundario);
+    textAlign(CENTER, CENTER);
+    textSize(32);
+    text("−", 512, yy - 2);
+    text("+", 648, yy - 2);
+    fill(prod.ajustes[it.clave] !== undefined ? color('#5B3F8C') : texto);
+    textStyle(BOLD);
+    textSize(30);
+    text(it.valor, 580, yy);
+    textStyle(NORMAL);
+    textAlign(LEFT, CENTER);
+  });
+  y += alto + 20;
+
+  // Costo y siguiente paso
+  const costo = plan.items.reduce((a, it) => a + it.costo, 0);
+  tarjeta(30, y, 640, 104);
+  fill(textoSecundario);
+  textSize(20);
+  text("COSTO APROX. DE PRODUCIR ESTO", 60, y + 36);
+  fill(texto);
+  textStyle(BOLD);
+  textSize(32);
+  text("$" + formato(costo), 60, y + 74);
+  textStyle(NORMAL);
+  const reset = { x: 440, y: y + 22, w: 210, h: 60 };
+  prodZonas.reset = reset;
+  if (Object.keys(prod.ajustes).length) {
+    fill('#F2F4F2');
+    rect(reset.x, reset.y, reset.w, reset.h, 16);
+    fill(textoSecundario);
+    textAlign(CENTER, CENTER);
+    textSize(21);
+    text("Volver a sugerido", reset.x + reset.w / 2, reset.y + reset.h / 2);
+    textAlign(LEFT, CENTER);
+  }
+  y += 124;
+
+  const b = { x: 30, y: y, w: 640, h: 110 };
+  prodZonas.compras = b;
+  fill(0, 22);
+  rect(b.x, b.y + 6, b.w, b.h, 24);
+  fill('#1F6F66');
+  rect(b.x, b.y, b.w, b.h, 24);
+  fill(blanco);
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  textSize(29);
+  text("VER LISTA DE COMPRAS  →", b.x + b.w / 2, b.y + b.h / 2);
+  textStyle(NORMAL);
+  textAlign(LEFT, CENTER);
+  altoContenido = y + 140;
+}
+
+function moverDiaProduccion(n) {
+  const f = new Date(prod.fecha);
+  f.setDate(f.getDate() + n);
+  prod.fecha = f;
+  prod.ajustes = {};
+  compras.hechos = {};
+}
+
+function pressProduccion(mx, my) {
+  if (botonAtras.isOver(mx, my)) { irAHerramientas(); return; }
+  const z = prodZonas;
+  if (z.ant && enRect(mx, my, z.ant)) { moverDiaProduccion(-1); return; }
+  if (z.sig && enRect(mx, my, z.sig)) { moverDiaProduccion(1); return; }
+  if (z.compras && enRect(mx, my, z.compras)) { irACompras(); return; }
+  if (z.reset && Object.keys(prod.ajustes).length && enRect(mx, my, z.reset)) { prod.ajustes = {}; return; }
+  for (const b of z.filas) {
+    if (enRect(mx, my, b)) {
+      prod.ajustes[b.clave] = Math.max(0, b.it.valor + b.d);
+      return;
+    }
+  }
+}
+
+// ============================================================
+// PANTALLA 12 - LISTA DE COMPRAS (con tus recetas y la produccion)
+// ============================================================
+
+const TIENDAS = { SAMS: "Sam's", CHD: "Chedraui", CHU: "Chuchin's", JO: "Josefina", DC: "DeCora", PAS: "Pastelero" };
+const ORDEN_TIENDAS = ["SAMS", "CHD", "CHU", "JO", "DC", "PAS", "OTRO"];
+const POCO_PAQUETE = 0.5;
+let compras = { hechos: {} };
+let comprasZonas = [];
+
+function irACompras() {
+  if (!prod.fecha) prod.fecha = mananaOperativa();
+  pantalla = 12;
+  if (!est.datos) cargarEstadisticas();
+  if (!rec.datos) cargarRecetas(true);
+}
+
+// La tienda va en el nombre (normalmente al final): SAMS, CHD, CHU, JO, DC o PAS
+function tiendaDe(nombre) {
+  const partes = String(nombre).trim().split(/\s+/).map(p => p.toUpperCase());
+  for (let i = partes.length - 1; i >= 0; i--) if (TIENDAS[partes[i]]) return partes[i];
+  return "OTRO";
+}
+
+function sinTienda(nombre) {
+  const t = tiendaDe(nombre);
+  const partes = String(nombre).trim().split(/\s+/);
+  if (t === "OTRO") return partes.join(" ");
+  for (let i = partes.length - 1; i >= 0; i--) {
+    if (partes[i].toUpperCase() === t) { partes.splice(i, 1); break; }
+  }
+  return partes.join(" ");
+}
+
+// Para juntar el mismo insumo aunque este escrito un poco distinto
+function claveInsumo(nombre) {
+  return clave(sinTienda(nombre)).replace(/\s+/g, "")
+    .replace(/(\d)lts?\b/g, "$1l").replace(/(\d)grs?\b/g, "$1g")
+    .replace(/piezas|pzas|pzs/g, "pz");
+}
+
+function listaCompras() {
+  const plan = calcularPlan();
+  const mapa = {};
+  const agregar = (ing, uso) => {
+    if (!(uso > 0)) return;
+    const k = claveInsumo(ing.n);
+    if (!mapa[k]) mapa[k] = { clave: k, nombre: sinTienda(ing.n), tienda: tiendaDe(ing.n), cu: ing.cu || 0, uso: 0 };
+    mapa[k].uso += uso;
+  };
+  for (const it of plan.items) {
+    if (!it.receta || !it.valor) continue;
+    for (const ing of it.receta.ingredientes) if (ing.pp > 0) agregar(ing, ing.pp * it.tandas);
+    for (const ing of it.receta.desechables)  if (ing.pp > 0) agregar(ing, ing.pp * it.valor);   // van por pieza
+  }
+  const porTienda = {};
+  for (const k in mapa) {
+    const m = mapa[k];
+    m.paquetes = Math.max(1, Math.ceil(m.uso - 0.02));
+    m.costo = m.paquetes * m.cu;
+    m.valorUso = m.uso * m.cu;                 // lo que cuesta lo que de verdad usas
+    m.poco = m.uso < POCO_PAQUETE;             // usas menos de medio paquete: seguro ya lo tienes
+    (porTienda[m.tienda] = porTienda[m.tienda] || []).push(m);
+  }
+  // Primero lo que hay que comprar (de mas a menos), al final lo que casi no se usa
+  for (const t in porTienda) porTienda[t].sort((a, b) => (a.poco - b.poco) || (b.uso * b.cu - a.uso * a.cu));
+  return { plan: plan, porTienda: porTienda };
+}
+
+function pantallaCompras() {
+  const lista = listaCompras();
+  let sub = "Para producir lo del " + DIAS[prod.fecha.getDay()] + " " + prod.fecha.getDate() + " " + MESES[prod.fecha.getMonth()];
+  let colSub = textoSecundario;
+  if (rec.cargando) sub = "Leyendo recetas…";
+  else if (rec.error && !rec.datos) { sub = rec.error; colSub = rojo; }
+  encabezado("Lista de compras", sub, colSub);
+  comprasZonas = [];
+
+  const tiendas = ORDEN_TIENDAS.filter(t => lista.porTienda[t]);
+  if (!rec.datos || !tiendas.length) {
+    tarjeta(30, 170, 640, 200);
+    fill(textoSecundario);
+    textAlign(CENTER, CENTER);
+    textSize(24);
+    text(!rec.datos ? "Cargando tus recetas…" : "No hay nada que preparar para ese día", 350, 250);
+    textSize(20);
+    text("Ajusta las cantidades en Producción", 350, 295);
+    textAlign(LEFT, CENTER);
+    altoContenido = 400;
+    return;
+  }
+
+  // Totales: valor de lo que usas y lo que falta comprar (sin contar lo que casi no se usa)
+  let valorUso = 0, pendiente = 0;
+  for (const t of tiendas) for (const m of lista.porTienda[t]) {
+    valorUso += m.valorUso;
+    if (!m.poco && !compras.hechos[m.clave]) pendiente += m.costo;
+  }
+  let y = 165;
+  tarjeta(30, y, 640, 150);
+  fill(textoSecundario);
+  textSize(19);
+  text("POR COMPRAR", 60, y + 36);
+  text("VALOR DE LO QUE USAS", 370, y + 36);
+  textStyle(BOLD);
+  textSize(34);
+  fill('#1F6F66');
+  text("$" + miles(pendiente), 60, y + 80);
+  fill(texto);
+  text("$" + miles(valorUso), 370, y + 80);
+  textStyle(NORMAL);
+  fill(textoSecundario);
+  textSize(18);
+  text("Paquetes completos que necesitas", 60, y + 118);
+  text("Ingredientes de esta producción", 370, y + 118);
+  y += 170;
+
+  for (const t of tiendas) {
+    const items = lista.porTienda[t];
+    const sub = items.filter(m => !m.poco).reduce((a, m) => a + m.costo, 0);
+    const alto = 84 + items.length * 80 + 6;
+    tarjeta(30, y, 640, alto);
+    fill(texto);
+    textStyle(BOLD);
+    textSize(29);
+    text(t === "OTRO" ? "Otros" : TIENDAS[t], 60, y + 44);
+    textStyle(NORMAL);
+    fill(textoSecundario);
+    textAlign(RIGHT, CENTER);
+    textSize(22);
+    text("$" + miles(sub), 640, y + 44);
+    textAlign(LEFT, CENTER);
+    stroke(borde); strokeWeight(1.5); line(60, y + 76, 640, y + 76); noStroke();
+
+    items.forEach((m, i) => {
+      const yy = y + 116 + i * 80;
+      const hecho = !!compras.hechos[m.clave];
+      comprasZonas.push({ x: 30, y: yy - 38, w: 640, h: 78, clave: m.clave });
+      // casilla
+      if (hecho) { fill('#1F6F66'); ellipse(76, yy, 34, 34); fill(blanco); textAlign(CENTER, CENTER); textSize(22); text("✓", 76, yy); }
+      else { noFill(); stroke(color('#C2C6C2')); strokeWeight(2.5); ellipse(76, yy, 32, 32); noStroke(); }
+      textAlign(LEFT, CENTER);
+      const apagado = hecho || m.poco;
+      fill(apagado ? color('#9AA09A') : texto);
+      textSize(23);
+      text(recortar(m.nombre, 330), 108, yy - 12);
+      fill(apagado ? color('#B4B9B4') : textoSecundario);
+      textSize(18);
+      const usoTxt = m.uso < 1 ? Math.round(m.uso * 100) + "% del paquete" : (Math.round(m.uso * 10) / 10) + " paquetes";
+      text("usas " + usoTxt + " · $" + formato(m.cu) + " c/u", 108, yy + 16);
+      textAlign(RIGHT, CENTER);
+      if (m.poco) {
+        fill(hecho ? color('#B4B9B4') : color('#9AA09A'));
+        textSize(20);
+        text(hecho ? "Lo tengo" : "¿Ya tienes?", 640, yy - 12);
+        textSize(18);
+        text("si no, $" + miles(m.cu), 640, yy + 16);
+      } else {
+        fill(hecho ? color('#B4B9B4') : texto);
+        textStyle(BOLD);
+        textSize(24);
+        text("Compra " + m.paquetes, 640, yy - 12);
+        textStyle(NORMAL);
+        fill(hecho ? color('#C2C6C2') : textoSecundario);
+        textSize(19);
+        text("$" + miles(m.costo), 640, yy + 16);
+      }
+      textAlign(LEFT, CENTER);
+    });
+    y += alto + 18;
+  }
+
+  fill(textoSecundario);
+  textAlign(CENTER, CENTER);
+  textSize(20);
+  text("Calculado con tus recetas y lo de Producción.", 350, y + 10);
+  text("En gris: usas menos de medio paquete, revisa si ya tienes.", 350, y + 40);
+  textAlign(LEFT, CENTER);
+  altoContenido = y + 70;
+}
+
+function pressCompras(mx, my) {
+  if (botonAtras.isOver(mx, my)) { pantalla = 11; return; }
+  for (const z of comprasZonas) {
+    if (enRect(mx, my, z)) { compras.hechos[z.clave] = !compras.hechos[z.clave]; return; }
+  }
+}
+
+// ============================================================
+// PANTALLA 13 - MERMA Y CORTESIAS
+// Se resta del inventario sin contar como venta, y se anota en la pestaña "Merma"
+// ============================================================
+
+let merma = { clase: "Merma", cant: {}, aviso: "" };
+let mermaZonas = { filas: [], clases: [], registrar: null };
+
+function irAMerma() {
+  pantalla = 13;
+  merma.cant = {};
+  cargarEstadisticas();
+  sincronizar(false);
+}
+
+function productosMerma() {
+  const lista = postres.map((n, k) => ({ clave: "p" + k, nombre: n, k: k, costo: costos[k],
+                                         piezas: { [n]: 1 }, stock: stockDe(n) }));
+  lista.push({ clave: "fc", nombre: "Fresas Chicas", k: "fc", costo: FRESAS.chicas.costo,
+               piezas: { "Fresas": FRESAS.chicas.porcion }, stock: stockDe("Fresas") });
+  lista.push({ clave: "fg", nombre: "Fresas Grandes", k: "fg", costo: FRESAS.grandes.costo,
+               piezas: { "Fresas": FRESAS.grandes.porcion }, stock: stockDe("Fresas") });
+  return lista;
+}
+
+function registrarMerma() {
+  const lista = productosMerma().filter(p => merma.cant[p.clave] > 0);
+  if (!lista.length) return;
+  asegurarDia();
+  const hora = horaTexto(new Date());
+  for (const p of lista) {
+    const n = merma.cant[p.clave];
+    const piezas = {};
+    for (const k in p.piezas) piezas[k] = p.piezas[k] * n;
+    pv.pendientes.push({
+      tipo: "merma", id: pv.fecha + "-m-" + Date.now().toString(36) + "-" + p.clave,
+      fecha: pv.fecha, hora: hora, producto: p.nombre, cantidad: n, clase: merma.clase,
+      costo: Math.round(p.costo * n * 100) / 100, piezas: piezas
+    });
+    moverStockLocal(piezas, -1);
+  }
+  merma.cant = {};
+  merma.aviso = "✓ Registrado";
+  merma.avisoHasta = millis() + 2500;
+  guardarPV();
+  sincronizar(true);
+}
+
+function pantallaMerma() {
+  encabezado("Merma y cortesías", millis() < (merma.avisoHasta || 0) ? merma.aviso : "Se resta del inventario, no cuenta como venta",
+             millis() < (merma.avisoHasta || 0) ? color(VERDE_OPERATIVA) : null);
+
+  // Tipo
+  mermaZonas = { filas: [], clases: [], registrar: null };
+  [["Merma", "Se echó a perder"], ["Cortesía", "Lo regalaste"]].forEach(([c, sub], k) => {
+    const b = { x: 30 + k * 325, y: 160, w: 315, h: 92, clase: c };
+    mermaZonas.clases.push(b);
+    const sel = merma.clase === c;
+    if (sel) { fill('#B4501A'); noStroke(); } else { fill(blanco); stroke(borde); strokeWeight(2); }
+    rect(b.x, b.y, b.w, b.h, 22);
+    noStroke();
+    fill(sel ? blanco : texto);
+    textAlign(CENTER, CENTER);
+    textStyle(BOLD);
+    textSize(27);
+    text(c, b.x + b.w / 2, b.y + 34);
+    textStyle(NORMAL);
+    if (sel) fill(255, 210); else fill(textoSecundario);
+    textSize(19);
+    text(sub, b.x + b.w / 2, b.y + 66);
+  });
+  textAlign(LEFT, CENTER);
+
+  const lista = productosMerma();
+  let y = 272;
+  const alto = 30 + lista.length * 82;
+  tarjeta(30, y, 640, alto);
+  let piezasTot = 0, costoTot = 0;
+  lista.forEach((p, i) => {
+    const yy = y + 56 + i * 82;
+    const n = merma.cant[p.clave] || 0;
+    piezasTot += n; costoTot += n * p.costo;
+    const col = (p.k === "fc" || p.k === "fg") ? rojo : color(COLORES_PV[p.k][1]);
+    fill(col);
+    ellipse(64, yy - 10, 13, 13);
+    fill(texto);
+    textSize(24);
+    text(p.nombre, 80, yy - 12);
+    fill(textoSecundario);
+    textSize(18);
+    text((p.stock === null ? "" : "hay " + cantidadTexto(p.stock) + (p.k === "fc" || p.k === "fg" ? " porc." : "") + " · ") +
+         "$" + formato(p.costo) + " c/u", 80, yy + 16);
+    const menos = { x: 482, y: yy - 30, w: 60, h: 60, clave: p.clave, d: -1 };
+    const mas   = { x: 618, y: yy - 30, w: 60, h: 60, clave: p.clave, d: +1 };
+    mermaZonas.filas.push(menos, mas);
+    fill('#F2F4F2');
+    ellipse(512, yy, 50, 50);
+    ellipse(648, yy, 50, 50);
+    fill(textoSecundario);
+    textAlign(CENTER, CENTER);
+    textSize(32);
+    text("−", 512, yy - 2);
+    text("+", 648, yy - 2);
+    fill(n ? color('#B4501A') : color('#B4B9B4'));
+    textStyle(BOLD);
+    textSize(30);
+    text(n, 580, yy);
+    textStyle(NORMAL);
+    textAlign(LEFT, CENTER);
+  });
+  y += alto + 20;
+
+  const b = { x: 30, y: y, w: 640, h: 110 };
+  mermaZonas.registrar = b;
+  const activo = piezasTot > 0;
+  if (activo) { fill(0, 22); rect(b.x, b.y + 6, b.w, b.h, 24); }
+  fill(activo ? color('#B4501A') : color('#D9DCD9'));
+  rect(b.x, b.y, b.w, b.h, 24);
+  fill(activo ? blanco : color('#A5AAA5'));
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  textSize(28);
+  text(activo ? "REGISTRAR " + merma.clase.toUpperCase() + " · " + piezasTot + " pzs · $" + formato(costoTot)
+              : "Elige cuántas piezas", b.x + b.w / 2, b.y + b.h / 2);
+  textStyle(NORMAL);
+  textAlign(LEFT, CENTER);
+  y += 130;
+
+  // ---------- Este mes ----------
+  const hoy = fechaPorDefecto();
+  const mesActual = hoy.getFullYear() + "-" + String(hoy.getMonth() + 1).padStart(2, "0");
+  const enviados = ((est.datos && est.datos.merma) || []).filter(m => m.f.slice(0, 7) === mesActual);
+  const porEnviar = pv.pendientes.filter(op => op.tipo === "merma" && op.fecha.slice(0, 7) === mesActual)
+                      .map(op => ({ f: op.fecha, h: op.hora, p: op.producto, n: op.cantidad, t: op.clase, c: op.costo, pendiente: true }));
+  const registros = enviados.concat(porEnviar);
+  const suma = t => registros.filter(m => m.t === t).reduce((a, m) => ({ n: a.n + m.n, c: a.c + m.c }), { n: 0, c: 0 });
+  const sm = suma("Merma"), sc = suma("Cortesía");
+
+  const ultimos = registros.slice().sort((a, c) => (a.f + a.h < c.f + c.h ? 1 : -1)).slice(0, 10);
+  const altoMes = 190 + ultimos.length * 52 + (ultimos.length ? 20 : 0);
+  tarjeta(30, y, 640, altoMes);
+  fill(texto);
+  textSize(29);
+  text("Este mes", 60, y + 44);
+  [["MERMA", sm, '#B4501A'], ["CORTESÍAS", sc, '#2E86C1']].forEach(([etq, s, col], k) => {
+    const x = 60 + k * 300;
+    fill(textoSecundario);
+    textSize(19);
+    text(etq, x, y + 92);
+    fill(col);
+    textStyle(BOLD);
+    textSize(34);
+    text("$" + formato(s.c), x, y + 132);
+    textStyle(NORMAL);
+    fill(textoSecundario);
+    textSize(19);
+    text(s.n + (s.n === 1 ? " pieza" : " piezas"), x, y + 166);
+  });
+  ultimos.forEach((m, i) => {
+    const yy = y + 214 + i * 52;
+    const f = fechaDesdeIso(m.f);
+    fill(textoSecundario);
+    textSize(19);
+    text(DIAS[f.getDay()] + " " + f.getDate(), 60, yy);
+    fill(texto);
+    textSize(22);
+    text(recortar(m.n + " × " + m.p, 300), 150, yy);
+    fill(m.t === "Cortesía" ? color('#2E86C1') : color('#B4501A'));
+    textSize(19);
+    text(m.t + (m.pendiente ? " · por enviar" : ""), 460, yy);
+    textAlign(RIGHT, CENTER);
+    fill(texto);
+    textSize(22);
+    text("$" + formato(m.c), 640, yy);
+    textAlign(LEFT, CENTER);
+  });
+  altoContenido = y + altoMes + 30;
+}
+
+function pressMerma(mx, my) {
+  if (botonAtras.isOver(mx, my)) { irAHerramientas(); return; }
+  for (const b of mermaZonas.clases) if (enRect(mx, my, b)) { merma.clase = b.clase; return; }
+  if (mermaZonas.registrar && enRect(mx, my, mermaZonas.registrar)) { registrarMerma(); return; }
+  for (const b of mermaZonas.filas) {
+    if (enRect(mx, my, b)) {
+      merma.cant[b.clave] = Math.max(0, (merma.cant[b.clave] || 0) + b.d);
+      return;
+    }
+  }
+}
+
+// ============================================================
 // PANTALLA 5 - ESTADISTICAS
 // Datos de la pestaña "Registro App" (un renglon por dia registrado)
 // y de "Órdenes App" (hora de cada orden del Punto de Venta).
@@ -2426,7 +3293,7 @@ async function cargarEstadisticas() {
     });
     const j = await r.json();
     if (j.ok) {
-      est.datos = { dias: j.dias || [], horas: j.horas || [] };
+      est.datos = { dias: j.dias || [], horas: j.horas || [], merma: j.merma || [] };
       est.actualizado = horaTexto(new Date());
       try { localStorage.setItem(EST_KEY, JSON.stringify({ datos: est.datos, actualizado: est.actualizado })); } catch (e) {}
     } else if (j.error === "PIN") {
@@ -3099,7 +3966,7 @@ function globo(cx, y, lineas) {
 }
 
 function pressEstadisticas(mx, my) {
-  if (botonAtras.isOver(mx, my)) { irAInicio(); return; }
+  if (botonAtras.isOver(mx, my)) { irAHerramientas(); return; }
   if (estZonas.toppings && enRect(mx, my, estZonas.toppings)) { irAToppings(); return; }
   if (enRect(mx, my, { x: 150, y: 105, w: 520, h: 46 })) { cargarEstadisticas(); return; }
 
@@ -3490,7 +4357,20 @@ function seccionReceta(titulo, filas, y, totales) {
     const yy = y + 104 + i * altoFila;
     fill(texto);
     textSize(24);
-    text(recortar(f.n, 450), 60, yy - 10);
+    const tienda = tiendaDe(f.n);
+    text(recortar(sinTienda(f.n), tienda === "OTRO" ? 450 : 340), 60, yy - 10);
+    if (tienda !== "OTRO") {
+      const wn = textWidth(recortar(sinTienda(f.n), 340));
+      textSize(17);
+      const etq = TIENDAS[tienda];
+      const we = textWidth(etq) + 18;
+      fill('#E6F1EF');
+      rect(60 + wn + 12, yy - 24, we, 28, 14);
+      fill('#1F6F66');
+      textAlign(CENTER, CENTER);
+      text(etq, 60 + wn + 12 + we / 2, yy - 10);
+      textAlign(LEFT, CENTER);
+    }
     fill(textoSecundario);
     textSize(19);
     const partes = [];
@@ -3528,7 +4408,7 @@ function seccionReceta(titulo, filas, y, totales) {
 function pressRecetas(mx, my) {
   if (botonAtras.isOver(mx, my)) {
     if (rec.sel !== null) { rec.sel = null; window.scrollTo(0, 0); }
-    else irAInicio();
+    else irAHerramientas();
     return;
   }
   if (rec.sel !== null) return;
@@ -3553,7 +4433,7 @@ function construirTecladoPin() {
       pinTeclas.push({ label: labels[r][c], x: xs[c], y: ys[r], w: 190, h: 82 });
 }
 
-function abrirPinDueno() { abrirPin("dueno"); }
+
 
 function abrirPin(modo) {
   pinModo = modo;
@@ -3659,9 +4539,12 @@ function pedirFaceId() {
 }
 
 function entrarModo(modo) {
-  if (modo === "dueno")        irACaptura();
-  else if (modo === "estad")   irAEstadisticas();
+  if (modo === "estad")        irAEstadisticas();
   else if (modo === "recetas") irARecetas();
+  else if (modo === "caja")    irACaja();
+  else if (modo === "prod")    irAProduccion();
+  else if (modo === "compras") irACompras();
+  else if (modo === "merma")   irAMerma();
 }
 
 // Botones de dueño: primero Face ID (si esta activado), si no, el PIN
@@ -3715,8 +4598,7 @@ function dibujarPinDueno() {
   fill(textoSecundario);
   textSize(25);
   text(pinModo === "reinicio" ? "Escribe el PIN de registro para confirmar"
-       : pinModo === "estad" ? "Para ver Estadísticas"
-       : pinModo === "recetas" ? "Para ver Recetas" : "Para entrar a Conteo Postres", 350, PIN_Y + 105);
+       : "Para entrar a " + ((HERRAMIENTAS.find(h => h[0] === pinModo) || [0, "Herramientas"])[1]), 350, PIN_Y + 105);
 
   // Puntitos
   const n = pinDueno.length;
@@ -3788,150 +4670,31 @@ function pressPinDueno(mx, my) {
   }
 }
 
-// ============================================================
-// TECLADO NUMERICO EN PANTALLA
-// ============================================================
 
-function construirTeclado() {
-  const labels = [["1","2","3"], ["4","5","6"], ["7","8","9"], ["C","0","<"]];
-  const xs = [50, 255, 460];
-  const ys = [1135, 1235, 1335, 1435];
-  const w = 190, h = 90;
 
-  teclas = [];
-  for (let r = 0; r < 4; r++) {
-    for (let c = 0; c < 3; c++) {
-      teclas.push({ label: labels[r][c], x: xs[c], y: ys[r], w: w, h: h });
-    }
-  }
 
-  botonSiguiente     = new Button(50, 1018, 600, 92, "SIGUIENTE", 31);
-  botonCerrarTeclado = new Button(550, 838, 100, 86, "×", 34);
-}
 
-function tecladoAbierto() {
-  return pantalla === 1 && activeBoxIndex >= 0;
-}
 
-function dibujarTeclado() {
-
-  const caja = cajas[activeBoxIndex];
-
-  // Oscurecer todo lo de arriba (incluye la franja del offset)
-  noStroke();
-  fill(0, 105);
-  rect(0, -OFFSET_Y - dyOverlay - 10, BASE_W, TEC_Y + OFFSET_Y + dyOverlay + 10);
-
-  fill(blanco);
-  rect(-20, TEC_Y, BASE_W + 40, 4000, 30);
-
-  // Que postre y que columna
-  fill(texto);
-  textAlign(LEFT, CENTER);
-  textSize(30);
-  text(postres[caja.producto], 50, 865);
-
-  fill(verde);
-  textSize(25);
-  text(caja.tipo === "inv" ? "Inventario con el que abriste" : "Los que quedaron", 50, 900);
-
-  fill(caja.text === "" ? color('#A5AAA5') : texto);
-  textSize(52);
-  text(caja.text === "" ? "0" : caja.text, 50, 965);
-
-  // Cerrar
-  noStroke();
-  fill(botonCerrarTeclado.isOver(mouseX, mouseY - OFFSET_Y - dyOverlay) ? '#E6EAE6' : '#F2F4F2');
-  rect(botonCerrarTeclado.x, botonCerrarTeclado.y,
-       botonCerrarTeclado.w, botonCerrarTeclado.h, 18);
-  fill(textoSecundario);
-  textAlign(CENTER, CENTER);
-  textSize(36);
-  text("×", botonCerrarTeclado.x + botonCerrarTeclado.w/2,
-                 botonCerrarTeclado.y + botonCerrarTeclado.h/2);
-  textAlign(LEFT, CENTER);
-
-  botonSiguiente.label =
-    (activeBoxIndex < cajas.length - 1) ? "SIGUIENTE →" : "LISTO";
-  botonSiguiente.display();
-
-  for (const t of teclas) {
-    noStroke();
-    fill(enRect(mouseX, mouseY - OFFSET_Y, t) ? '#E6EAE6' : '#F2F4F2');
-    rect(t.x, t.y, t.w, t.h, 18);
-
-    textAlign(CENTER, CENTER);
-
-    if (t.label === "<") {
-      fill(textoSecundario); textSize(42);
-      text("←", t.x + t.w/2, t.y + t.h/2);
-    } else if (t.label === "C") {
-      fill(textoSecundario); textSize(28);
-      text("LIMPIAR", t.x + t.w/2, t.y + t.h/2);
-    } else {
-      fill(texto); textSize(40);
-      text(t.label, t.x + t.w/2, t.y + t.h/2);
-    }
-
-    textAlign(LEFT, CENTER);
-  }
-}
 
 function enRect(mx, my, r) {
   return mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
 }
 
-function escribirDigito(d) {
-  if (activeBoxIndex < 0) return;
-  const c = cajas[activeBoxIndex];
-  if (c.text.length < 4) c.text += d;
-}
 
-function borrarUltimo() {
-  if (activeBoxIndex < 0) return;
-  cajas[activeBoxIndex].text = cajas[activeBoxIndex].text.slice(0, -1);
-}
 
-function limpiarCampo() {
-  if (activeBoxIndex < 0) return;
-  cajas[activeBoxIndex].text = "";
-}
 
-function siguienteCampo() {
-  if (activeBoxIndex < cajas.length - 1) cajas[activeBoxIndex + 1].activate();
-  else cerrarTeclado();
-}
 
-function pressTeclado(mx, my, myLienzo) {
 
-  if (botonCerrarTeclado.isOver(mx, my)) { cerrarTeclado(); return; }
-  if (botonSiguiente.isOver(mx, my))     { siguienteCampo(); return; }
 
-  for (const t of teclas) {
-    if (enRect(mx, my, t)) {
-      if (t.label === "C") limpiarCampo();
-      else if (t.label === "<") borrarUltimo();
-      else escribirDigito(t.label);
-      return;
-    }
-  }
 
-  // Arriba del teclado: si toco otra casilla, me paso a esa
-  if (my < TEC_Y) {
-    for (const c of cajas) if (c.isOver(mx, myLienzo)) { c.activate(); return; }
-    cerrarTeclado();
-  }
-}
+
+
 
 // ============================================================
 // CALCULOS
 // ============================================================
 
-function leer(caja) {
-  let v = parseInt(caja.getText(), 10);
-  if (!Number.isFinite(v) || v < 0) v = 0;
-  return v;
-}
+
 
 function reiniciarResultados() {
   vendidos = new Array(N + 1).fill(0);
@@ -3946,32 +4709,8 @@ function reiniciarResultados() {
 }
 
 // Resumen a partir del conteo (inventario - lo que quedo)
-function calcularResultados() {
 
-  reiniciarResultados();
 
-  for (let i = 0; i < N; i++) {
-
-    const inventario = leer(cajas[i * 2]);
-    const restante   = leer(cajas[i * 2 + 1]);
-
-    // Vendidos = con los que abrio - los que quedaron
-    let v = inventario - restante;
-    if (v < 0) v = 0;   // por si se captura mal
-
-    vendidos[i] = v;
-
-    totalPostres    += v;
-    ventaTotal      += v * precios[i];
-    costoProduccion += v * costos[i];
-  }
-
-  subtituloResumen = "Conteo, venta y ganancia";
-  terminarCalculo(1);
-  fechaRegistro = fechaPorDefecto();
-}
-
-// Resumen a partir de las ordenes del Punto de Venta
 function calcularDesdePV() {
 
   asegurarDia();
@@ -3984,6 +4723,7 @@ function calcularDesdePV() {
   const deAyer = hoySinNada && pv.anterior && pv.anterior.ordenes.length;
   if (deAyer) fuente = pv.anterior;
 
+  pagosCierre = ventasPorPago(fuente.ordenes);
   for (const o of fuente.ordenes) {
     for (const it of o.items) {
       const idx = it.prod === "fresas" ? N : it.prod;
@@ -4028,22 +4768,18 @@ function terminarCalculo(origen) {
   origenResumen = origen;
 
   pantalla = 2;
-  cerrarTeclado();
 }
 
 // ============================================================
 // NAVEGACION
 // ============================================================
 
-function cerrarTeclado() {
-  for (const c of cajas) c.active = false;
-  activeBoxIndex = -1;
-}
 
-function irAInicio()  { pantalla = 0; cerrarTeclado(); modalFresas = null; pinDueno = null; }
+
+function irAInicio()  { pantalla = 0; modalFresas = null; pinDueno = null; numEntrada = null; cobro = null; }
 function irAEstadisticas() { pantalla = 5; est.sel = null; cargarEstadisticas(); }
-function irACaptura() { pantalla = 1; cerrarTeclado(); confirmarBorrar = SIN_CONFIRMAR; }
 function irAPV()      {
+  cobro = null;
   asegurarDia(); pantalla = 3; modalFresas = null; confirmarVaciar = SIN_CONFIRMAR;
   sincronizar(false);   // trae el stock actualizado del Sheet
 }
@@ -4067,27 +4803,13 @@ function handlePress(mxRaw, myRaw) {
 
   if (pantalla === 0) {
 
-    if (botonInicio.isOver(mx, my))          entrarDueno("dueno");
+    if (botonHerr.isOver(mx, my))            irAHerramientas();
     else if (botonPV.isOver(mx, my))         irAPV();
-    else if (botonEst.isOver(mx, my))        entrarDueno("estad");
-    else if (botonRec.isOver(mx, my))        entrarDueno("recetas");
-    else if (botonCierrePV.isOver(mx, my))   calcularDesdePV();
-
-  } else if (pantalla === 1) {
-
-    if (botonAtras.isOver(mx, my)) { irAInicio(); return; }
-    if (enRect(mx, my, botonBorrar)) { pressBorrarTodo(); return; }
-
-    for (const c of cajas) c.pressedAt(mx, my);
-
-    if (botonCalcular.isOver(mx, my)) calcularResultados();
+    else if (botonCierre.isOver(mx, my))     calcularDesdePV();
 
   } else if (pantalla === 2) {
 
-    if (botonAtras.isOver(mx, my)) {
-      if (origenResumen === 3) irAPV(); else irACaptura();
-      return;
-    }
+    if (botonAtras.isOver(mx, my)) { irAInicio(); return; }
     if (botonRegistrar.isOver(mx, my))  { registrar();     return; }
     if (botonDiaAntes.isOver(mx, my))   { moverFecha(-1);  return; }
     if (botonDiaDespues.isOver(mx, my)) { moverFecha(1);   return; }
@@ -4113,10 +4835,15 @@ function handlePress(mxRaw, myRaw) {
 
     pressHistorial(mx, my);
 
-  } else {
+  } else if (pantalla === 8) {
 
     pressToppings(mx, my);
-  }
+
+  } else if (pantalla === 9)  { pressHerramientas(mx, my); }
+  else if (pantalla === 10)   { pressCaja(mx, my); }
+  else if (pantalla === 11)   { pressProduccion(mx, my); }
+  else if (pantalla === 12)   { pressCompras(mx, my); }
+  else                        { pressMerma(mx, my); }
 }
 
 // ============================================================
@@ -4133,23 +4860,13 @@ function keyPressed() {
     return false;
   }
 
-  if (pantalla !== 1) return;
-
-  if (tecladoAbierto()) {
-    if (key >= '0' && key <= '9') { escribirDigito(key); return false; }
-    if (keyCode === BACKSPACE)    { borrarUltimo();      return false; }
-    if (keyCode === DELETE)       { limpiarCampo();      return false; }
-    if (keyCode === TAB)          { siguienteCampo();    return false; }
-    if (keyCode === ESCAPE)       { cerrarTeclado();     return false; }
-    if (keyCode === ENTER || keyCode === RETURN) {
-      if (activeBoxIndex < cajas.length - 1) siguienteCampo();
-      else { cerrarTeclado(); calcularResultados(); }
-      return false;
-    }
+  if (numEntrada) {
+    if ((key >= '0' && key <= '9') || key === '.') escribirNum(key);
+    else if (keyCode === BACKSPACE)               escribirNum("<");
+    else if (keyCode === ENTER || keyCode === RETURN) terminarNumero();
+    else if (keyCode === ESCAPE)                  numEntrada = null;
     return false;
   }
-
-  if (keyCode === ENTER || keyCode === RETURN) calcularResultados();
 }
 
 // ============================================================
@@ -4177,58 +4894,6 @@ function partirTexto(s, maxW) {
   }
   if (actual) out.push(actual);
   return out;
-}
-
-// ============================================================
-// TEXTBOX
-// ============================================================
-
-class TextBox {
-
-  constructor(x, y, w, h, producto, tipo) {
-    this.x = x; this.y = y; this.w = w; this.h = h;
-    this.producto = producto;
-    this.tipo = tipo;          // "inv" o "uni"
-    this.text = "";
-    this.active = false;
-  }
-
-  get indice() { return cajas.indexOf(this); }
-
-  display() {
-    if (this.active) { fill('#F0F6F2'); stroke(verde); strokeWeight(3); }
-    else             { fill('#F7F8F7'); stroke(borde); strokeWeight(2); }
-
-    rect(this.x, this.y, this.w, this.h, 18);
-
-    textAlign(CENTER, CENTER);
-    textSize(34);
-
-    if (this.text === "") { fill('#A5AAA5'); text("0", this.x + this.w/2, this.y + this.h/2); }
-    else                  { fill(texto);     text(this.text, this.x + this.w/2, this.y + this.h/2); }
-
-    textAlign(LEFT, CENTER);
-    noStroke();
-  }
-
-  isOver(mx, my) {
-    return mx >= this.x && mx <= this.x + this.w &&
-           my >= this.y && my <= this.y + this.h;
-  }
-
-  pressedAt(mx, my) {
-    if (this.isOver(mx, my)) this.activate();
-    else if (this.active) this.active = false;
-  }
-
-  activate() {
-    for (const c of cajas) c.active = false;
-    this.active = true;
-    activeBoxIndex = this.indice;
-    cajaPorMostrar = this;
-  }
-
-  getText() { return this.text; }
 }
 
 // ============================================================

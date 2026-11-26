@@ -406,7 +406,8 @@ function overlayActual() {
   if (term)                           return { fin: TERM_FIN, dibujar: dibujarTerm,       press: pressTerm };
   if (pinDueno !== null)              return { fin: PIN_FIN, dibujar: dibujarPinDueno,    press: pressPinDueno };
   if (numEntrada)                     return { fin: NUM_FIN, dibujar: dibujarNumero,      press: pressNumero };
-  if (pantalla === 3 && cobro)        return { fin: PAGO_FIN, dibujar: dibujarCobro,      press: pressCobro };
+  if (pantalla === 3 && efe)          return { fin: EFE_FIN, dibujar: dibujarEfe,         press: pressEfe };
+  if (pantalla === 3 && cobro)      return { fin: PAGO_FIN, dibujar: dibujarCobro,      press: pressCobro };
   if (pantalla === 3 && modalFresas)  return { fin: MF_FIN,  dibujar: dibujarModalFresas, press: pressModalFresas };
   return null;
 }
@@ -436,6 +437,7 @@ function draw() {
   else if (pantalla === 10) pantallaCaja();
   else if (pantalla === 11) pantallaProduccion();
   else if (pantalla === 12) pantallaCompras();
+  else if (pantalla === 14) pantallaVentaDia();
   else                     pantallaMerma();
 
   // Las ventanas de abajo se pegan al borde de lo que se ve
@@ -1429,7 +1431,7 @@ function pressPV(mx, my) {
   if (pv.carrito.length && enRect(mx, my, pvOrdenar)) cobro = { total: totalItems(pv.carrito) };
 }
 
-function ordenar(pago, mp) {
+function ordenar(pago, mp, recibido) {
   if (!pv.carrito.length) return;
   const items = JSON.parse(JSON.stringify(pv.carrito));
   asegurarDia();
@@ -1449,6 +1451,7 @@ function ordenar(pago, mp) {
     pago: pago || "efectivo"
   };
   if (mp) orden.mp = mp;              // cobrado y confirmado por la terminal
+  if (recibido) orden.recibido = recibido;   // efectivo: con cuanto pago el cliente
   pv.siguiente++;
   pv.ordenes.push(orden);
   pv.carrito = [];
@@ -2402,9 +2405,221 @@ function pressCobro(mx, my) {
       const total = cobro.total;
       cobro = null;
       if (b.pago === "tarjeta") cobrarConTerminal(total);   // se manda a la terminal Mercado Pago
+      else if (b.pago === "efectivo") efe = { total: total, paso: "monto", recibido: 0 };
       else ordenar(b.pago);
       return;
     }
+  }
+}
+
+// ============================================================
+// EFECTIVO: con cuanto pago el cliente -> cambio y confirmar
+// ============================================================
+
+let efe = null;                  // { total, paso: "monto" | "confirmar", recibido }
+const EFE_FIN = 1495;
+const EFE_BILLETES = [100, 200, 500];
+const EFE_MAX_LINEAS = 6;
+
+function efeY() {
+  return EFE_FIN - (efe.paso === "monto" ? 540 : altoConfirmarEfe());
+}
+
+function botonesBillete(y) {
+  return EFE_BILLETES.map((v, k) => ({ x: [50, 255, 460][k], y: y + 210, w: 190, h: 110, valor: v }));
+}
+function cajaOtraCantidad(y) { return { x: 50, y: y + 345, w: 600, h: 96 }; }
+
+function lineasEfe() {
+  const todas = agruparItems(pv.carrito);
+  return { lineas: todas.slice(0, EFE_MAX_LINEAS), ocultas: Math.max(0, todas.length - EFE_MAX_LINEAS) };
+}
+
+function altoConfirmarEfe() {
+  const { lineas, ocultas } = lineasEfe();
+  let h = 350;
+  for (const l of lineas) h += l.fresas ? 78 : 48;
+  return h + (ocultas ? 40 : 0) + 90 + 106 + 45;
+}
+
+function botonesConfirmarEfe(y) {
+  const by = y + altoConfirmarEfe() - 106 - 45;
+  return {
+    regresar:  { x: 50,  y: by, w: 230, h: 106 },
+    confirmar: { x: 300, y: by, w: 350, h: 106 }
+  };
+}
+
+function elegirRecibido(v) {
+  if (v + 0.001 < efe.total) { avisar("Es menos que el total ($" + formato(efe.total) + ")"); return; }
+  efe.recibido = v;
+  efe.paso = "confirmar";
+}
+
+function dibujarEfe() {
+  if (!pv.carrito.length) { efe = null; return; }
+  const e = efe;
+  const Y = efeY();
+
+  noStroke();
+  fill(0, 115);
+  rect(0, -OFFSET_Y - dyOverlay - 10, BASE_W, Y + OFFSET_Y + dyOverlay + 10);
+  fill(blanco);
+  rect(-20, Y, BASE_W + 40, 4000, 30);
+  textAlign(CENTER, CENTER);
+
+  if (e.paso === "monto") {
+    fill(texto);
+    textStyle(BOLD);
+    textSize(32);
+    text("¿Con cuánto pagó?", 350, Y + 62);
+    textStyle(NORMAL);
+    fill(textoSecundario);
+    textSize(22);
+    text("Total de la orden", 350, Y + 108);
+    fill(texto);
+    textStyle(BOLD);
+    textSize(48);
+    text("$" + formato(e.total), 350, Y + 158);
+
+    for (const b of botonesBillete(Y)) {
+      const alcanza = b.valor + 0.001 >= e.total;
+      if (alcanza) { fill(0, 20); rect(b.x, b.y + 5, b.w, b.h, 24); }
+      fill(alcanza ? color('#3A8F5C') : color('#EDEFED'));
+      rect(b.x, b.y, b.w, b.h, 24);
+      fill(alcanza ? blanco : color('#B4B9B4'));
+      textSize(36);
+      text("$" + b.valor, b.x + b.w / 2, b.y + b.h / 2);
+    }
+    textStyle(NORMAL);
+
+    const c = cajaOtraCantidad(Y);
+    fill('#F2F4F2');
+    stroke(borde);
+    strokeWeight(2);
+    rect(c.x, c.y, c.w, c.h, 20);
+    noStroke();
+    textAlign(LEFT, CENTER);
+    fill(texto);
+    textSize(27);
+    text("Otra cantidad", c.x + 30, c.y + c.h / 2);
+    textAlign(RIGHT, CENTER);
+    fill(textoSecundario);
+    textSize(27);
+    text("$ ______   ›", c.x + c.w - 30, c.y + c.h / 2);
+
+    textAlign(CENTER, CENTER);
+    fill(textoSecundario);
+    textSize(22);
+    text("Toca arriba para regresar", 350, Y + 490);
+    textAlign(LEFT, CENTER);
+    return;
+  }
+
+  // ---------- Confirmar: cambio + datos de la orden ----------
+  const cambio = Math.max(0, e.recibido - e.total);
+  fill(texto);
+  textStyle(BOLD);
+  textSize(32);
+  text("Confirma la orden", 350, Y + 58);
+  textStyle(NORMAL);
+
+  fill('#E6F2EA');
+  rect(50, Y + 100, 600, 160, 24);
+  fill('#2F7A4D');
+  textSize(23);
+  text(cambio > 0 ? "CAMBIO A DAR" : "PAGÓ EXACTO · SIN CAMBIO", 350, Y + 136);
+  textStyle(BOLD);
+  textSize(66);
+  text("$" + formato(cambio), 350, Y + 205);
+  textStyle(NORMAL);
+
+  fill(textoSecundario);
+  textSize(24);
+  text("Pagó con $" + formato(e.recibido) + "  ·  Efectivo", 350, Y + 300);
+
+  const { lineas, ocultas } = lineasEfe();
+  let ly = Y + 350;
+  for (const l of lineas) {
+    fill(l.fresas ? rojo : color(COLORES_PV[l.prod][1]));
+    ellipse(68, ly + 20, 14, 14);
+    fill(texto);
+    textSize(26);
+    textAlign(LEFT, CENTER);
+    text(recortar((l.cant > 1 ? l.cant + " × " : "") + nombreItem(l.item), 430), 88, ly + 20);
+    textAlign(RIGHT, CENTER);
+    text("$" + formato(l.total), 640, ly + 20);
+    if (l.fresas) {
+      textAlign(LEFT, CENTER);
+      fill(textoSecundario);
+      textSize(21);
+      text(recortar(resumenToppings(l.item), 540), 88, ly + 52);
+      ly += 78;
+    } else {
+      ly += 48;
+    }
+  }
+  if (ocultas) {
+    textAlign(LEFT, CENTER);
+    fill(textoSecundario);
+    textSize(22);
+    text("+ " + ocultas + " líneas más", 88, ly + 16);
+    ly += 40;
+  }
+
+  stroke(borde);
+  strokeWeight(2);
+  line(60, ly + 12, 640, ly + 12);
+  noStroke();
+  textAlign(LEFT, CENTER);
+  fill(texto);
+  textSize(27);
+  text("TOTAL", 60, ly + 50);
+  textAlign(RIGHT, CENTER);
+  textStyle(BOLD);
+  textSize(36);
+  text("$" + formato(e.total), 640, ly + 50);
+
+  const bs = botonesConfirmarEfe(Y);
+  textAlign(CENTER, CENTER);
+  fill('#EDEFED');
+  rect(bs.regresar.x, bs.regresar.y, bs.regresar.w, bs.regresar.h, 24);
+  fill(texto);
+  textSize(28);
+  text("Regresar", bs.regresar.x + bs.regresar.w / 2, bs.regresar.y + bs.regresar.h / 2);
+  fill(0, 20);
+  rect(bs.confirmar.x, bs.confirmar.y + 5, bs.confirmar.w, bs.confirmar.h, 24);
+  fill('#3A8F5C');
+  rect(bs.confirmar.x, bs.confirmar.y, bs.confirmar.w, bs.confirmar.h, 24);
+  fill(blanco);
+  textSize(31);
+  text("CONFIRMAR", bs.confirmar.x + bs.confirmar.w / 2, bs.confirmar.y + bs.confirmar.h / 2);
+  textStyle(NORMAL);
+  textAlign(LEFT, CENTER);
+}
+
+function pressEfe(mx, my) {
+  const e = efe;
+  const Y = efeY();
+
+  if (e.paso === "monto") {
+    if (my < Y) { efe = null; cobro = { total: e.total }; return; }   // regresa a "¿Cómo pagó?"
+    for (const b of botonesBillete(Y)) {
+      if (enRect(mx, my, b)) { elegirRecibido(b.valor); return; }
+    }
+    if (enRect(mx, my, cajaOtraCantidad(Y))) {
+      pedirNumero("¿Con cuánto pagó?", "Total de la orden: $" + formato(e.total), 0, v => {
+        if (efe === e && v > 0) elegirRecibido(v);
+      });
+    }
+    return;
+  }
+
+  const bs = botonesConfirmarEfe(Y);
+  if (my < Y || enRect(mx, my, bs.regresar)) { e.paso = "monto"; return; }
+  if (enRect(mx, my, bs.confirmar)) {
+    efe = null;
+    ordenar("efectivo", null, e.recibido);
   }
 }
 
@@ -2777,7 +2992,8 @@ function ordenesDelDia() {
 // ============================================================
 
 const HERRAMIENTAS = [
-  ["estad",   "Estadísticas",         "Ventas, utilidades y gráficas",        '#3D93CB'],
+  ["venta",   "Venta del día",        "Lo que lleva vendido tu empleado",     '#2E86C1'],
+  ["estad",  "Estadísticas",         "Ventas, utilidades y gráficas",        '#3D93CB'],
   ["recetas", "Recetas",              "Ingredientes, costos y tiendas",       '#F2C230'],
   ["caja",    "Cuadre de caja",       "Efectivo, transferencias y tarjeta",   '#4F765F'],
   ["prod",    "Producción de mañana", "Cuánto preparar de cada postre",       '#5B3F8C'],
@@ -3432,6 +3648,193 @@ function pressCompras(mx, my) {
   for (const z of comprasZonas) {
     if (enRect(mx, my, z)) { compras.hechos[z.clave] = !compras.hechos[z.clave]; return; }
   }
+}
+
+// ============================================================
+// PANTALLA 14 - VENTA DEL DIA (segun el inventario del Sheet)
+//  Vendido = (inicial del dia + lo que se metio al refri − merma − lo que queda) × precio
+//  Las fresas se cuentan con las ordenes reales (tamaño + toppings).
+//  Se actualiza sola cada 30 s mientras esta abierta.
+// ============================================================
+
+let vdia = { estado: "listo", datos: null, msg: "", t: -99999 };
+const VDIA_CADA = 30000;
+
+function irAVentaDia() {
+  pantalla = 14;
+  cargarVentaDia();
+}
+
+async function cargarVentaDia() {
+  if (vdia.estado === "cargando") return;
+  vdia.estado = "cargando";
+  vdia.t = millis();
+  try {
+    await sincronizar(false);          // si este celular tiene ordenes sin mandar, primero se mandan
+    const j = await llamarMP({ accion: "ventadia" });
+    if (j.ok) { vdia.datos = j; vdia.estado = "ok"; vdia.msg = ""; }
+    else {
+      if (j.error === "PIN") borrarPin();
+      vdia.estado = "error";
+      vdia.msg = j.error === "PIN" ? "PIN de registro incorrecto. Toca para reintentar." : "El Sheet respondió con error: " + (j.error || "");
+    }
+  } catch (e) {
+    vdia.estado = "error";
+    vdia.msg = "Sin conexión. Toca para reintentar.";
+  }
+  vdia.t = millis();
+}
+
+function precioDe(nombre) {
+  const k = postres.findIndex(p => clave(p) === clave(nombre));
+  return k >= 0 ? precios[k] : null;
+}
+
+function calcularVentaDia(d) {
+  const filas = [];
+  let venta = 0;
+
+  // Fresas: lo cobrado en cada orden menos los postres de esa orden
+  let fresasVenta = 0, fresasPorc = 0, registrado = 0;
+  for (const o of d.ordenes || []) {
+    registrado += o.total;
+    let resto = o.total;
+    for (const k in o.piezas) {
+      if (clave(k) === "fresas") { fresasPorc += Number(o.piezas[k]) || 0; continue; }
+      const p = precioDe(k);
+      if (p !== null) resto -= p * (Number(o.piezas[k]) || 0);
+    }
+    if (o.piezas && Object.keys(o.piezas).some(k => clave(k) === "fresas")) fresasVenta += Math.max(0, resto);
+  }
+
+  for (const p of d.productos || []) {
+    const hubo = (Number(p.inicial) || 0) + (Number(p.agregado) || 0);
+    if (clave(p.nombre) === "fresas") {
+      filas.push({ nombre: "Fresas con Crema", hubo: hubo, queda: p.actual, merma: 0,
+                   vendidos: fresasPorc, venta: fresasVenta, porciones: true });
+      venta += fresasVenta;
+      continue;
+    }
+    const precio = precioDe(p.nombre);
+    const vendidos = Math.max(0, Math.round((hubo - (Number(p.merma) || 0) - p.actual) * 100) / 100);
+    const v = precio === null ? 0 : vendidos * precio;
+    venta += v;
+    filas.push({ nombre: p.nombre, hubo: hubo, queda: p.actual, merma: Number(p.merma) || 0,
+                 vendidos: vendidos, venta: v, sinPrecio: precio === null });
+  }
+  return { filas: filas, venta: venta, registrado: registrado };
+}
+
+function numCorto(n) {
+  n = Math.round((Number(n) || 0) * 10) / 10;
+  return String(n);
+}
+
+function pantallaVentaDia() {
+  // Se actualiza sola
+  if (vdia.estado !== "cargando" && millis() - vdia.t > VDIA_CADA) cargarVentaDia();
+
+  const d = vdia.datos;
+  let sub, colSub;
+  if (vdia.estado === "cargando" && !d) sub = "Consultando el Sheet…";
+  else if (vdia.estado === "error")     { sub = vdia.msg; colSub = rojo; }
+  else if (d) sub = (vdia.estado === "cargando" ? "Actualizando…" : "Actualizado " + d.hora + " · toca para actualizar");
+  else sub = "Toca para actualizar";
+  encabezado("Venta del día", sub, colSub);
+
+  if (!d) { altoContenido = 400; return; }
+
+  const r = calcularVentaDia(d);
+  let y = 165;
+
+  // ---------- Total ----------
+  tarjeta(30, y, 640, 220);
+  fill(textoSecundario);
+  textAlign(LEFT, CENTER);
+  textSize(20);
+  text("VENDIDO HOY · SEGÚN EL REFRI", 60, y + 44);
+  fill('#2E86C1');
+  textStyle(BOLD);
+  textSize(68);
+  text("$" + formato(r.venta), 60, y + 115);
+  textStyle(NORMAL);
+  fill(textoSecundario);
+  textSize(23);
+  text("Comisión del empleado (18 %): $" + formato(r.venta * COMISION_EMPLEADO), 60, y + 180);
+  y += 240;
+
+  // ---------- Comparacion con lo registrado en la app ----------
+  const dif = r.venta - r.registrado;
+  tarjeta(30, y, 640, 120);
+  fill(texto);
+  textSize(24);
+  text("Registrado en la app", 60, y + 40);
+  textAlign(RIGHT, CENTER);
+  text("$" + formato(r.registrado), 640, y + 40);
+  textAlign(LEFT, CENTER);
+  textSize(22);
+  if (Math.abs(dif) < 0.5) { fill('#2F7A4D'); text("✓ Cuadra con el refri", 60, y + 84); }
+  else if (dif > 0)        { fill(rojo); text("Faltan $" + formato(dif) + " por registrar en la app", 60, y + 84); }
+  else                     { fill(textoSecundario); text("La app tiene $" + formato(-dif) + " más que el refri", 60, y + 84); }
+  y += 140;
+
+  // ---------- Por postre ----------
+  const filas = r.filas;
+  let alto = 110;
+  for (const f of filas) alto += f.merma || f.porciones ? 86 : 62;
+  tarjeta(30, y, 640, alto);
+  fill(textoSecundario);
+  textSize(20);
+  textAlign(LEFT, CENTER);
+  text("POSTRE", 60, y + 44);
+  textAlign(CENTER, CENTER);
+  text("HABÍA", 345, y + 44);
+  text("QUEDA", 425, y + 44);
+  text("VEND.", 505, y + 44);
+  textAlign(RIGHT, CENTER);
+  text("VENTA", 640, y + 44);
+  stroke(borde); strokeWeight(2); line(60, y + 72, 640, y + 72); noStroke();
+
+  let yy = y + 104;
+  for (const f of filas) {
+    const extra = f.merma || f.porciones;
+    textAlign(LEFT, CENTER);
+    fill(texto);
+    textSize(24);
+    text(recortar(f.nombre, 245), 60, yy);
+    textAlign(CENTER, CENTER);
+    fill(textoSecundario);
+    text(numCorto(f.hubo), 345, yy);
+    text(numCorto(f.queda), 425, yy);
+    fill(texto);
+    textStyle(BOLD);
+    text(numCorto(f.vendidos), 505, yy);
+    textAlign(RIGHT, CENTER);
+    text(f.sinPrecio ? "—" : "$" + formato(f.venta), 640, yy);
+    textStyle(NORMAL);
+    if (extra) {
+      textAlign(LEFT, CENTER);
+      fill(f.merma ? color('#B4501A') : textoSecundario);
+      textSize(19);
+      text(f.porciones ? "En porciones (chica 1, grande 1.5) · venta con toppings"
+                       : "− " + numCorto(f.merma) + " de merma o cortesía (no cuenta)", 60, yy + 30);
+    }
+    yy += extra ? 86 : 62;
+  }
+  y += alto + 20;
+
+  fill(textoSecundario);
+  textSize(20);
+  textAlign(LEFT, TOP);
+  text("Había = lo que había al empezar el día + lo que metiste al refri (cuando subes el stock en el Sheet). " +
+       "Se actualiza sola cada 30 segundos.", 40, y, 620, 120);
+  textAlign(LEFT, CENTER);
+  altoContenido = y + 130;
+}
+
+function pressVentaDia(mx, my) {
+  if (botonAtras.isOver(mx, my)) { irAHerramientas(); return; }
+  if (enRect(mx, my, { x: 150, y: 105, w: 520, h: 46 })) cargarVentaDia();
 }
 
 // ============================================================
@@ -4921,6 +5324,7 @@ function entrarModo(modo) {
   else if (modo === "prod")    irAProduccion();
   else if (modo === "compras") irACompras();
   else if (modo === "merma")   irAMerma();
+  else if (modo === "venta")   irAVentaDia();
 }
 
 // Botones de dueño: primero Face ID (si esta activado), si no, el PIN
@@ -5219,6 +5623,7 @@ function handlePress(mxRaw, myRaw) {
   else if (pantalla === 10)   { pressCaja(mx, my); }
   else if (pantalla === 11)   { pressProduccion(mx, my); }
   else if (pantalla === 12)   { pressCompras(mx, my); }
+  else if (pantalla === 14)   { pressVentaDia(mx, my); }
   else                        { pressMerma(mx, my); }
 }
 

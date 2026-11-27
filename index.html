@@ -121,7 +121,7 @@ let fondo, blanco, texto, textoSecundario, verde, verdeHover, borde, rojo, rojoH
 // ---------- PANTALLAS ----------
 // 0 = inicio | 2 = resumen del cierre | 3 = punto de venta | 4 = orden final
 // 5 = estadisticas | 6 = recetas | 7 = historial del punto de venta | 8 = toppings
-// 9 = herramientas | 10 = cuadre de caja | 11 = produccion | 12 = lista de compras | 13 = merma
+// 9 = herramientas | 10 = cuadre de caja | 11 = produccion | 12 = inventario | 13 = merma
 let pantalla = 0;
 
 // ---------- GASTOS FIJOS DEL DIA ----------
@@ -268,7 +268,7 @@ let ofNueva = { x: 30, y: 1450, w: 640, h: 110 };
 // Se guarda cifrado (SHA-256), no el PIN tal cual
 const PIN_DUENO_HASH = "3b1e53716e25c357d144145ae01cd61d5b32042ea2e94273791e661fb571159f";
 let pinDueno = null;      // null = cerrado | texto mientras se escribe
-let pinModo = "estad";    // una herramienta (estad, recetas, caja, prod, compras, merma) | reinicio (Vendido hoy)
+let pinModo = "estad";    // una herramienta (estad, recetas, caja, prod, inv, merma) | reinicio (Vendido hoy)
 // PIN de registro (el mismo del Sheet) para reiniciar "Vendido hoy"
 const PIN_REGISTRO_HASH = "5615348358de89c7572c2663ccfa4dbcf90d24b37e8aea9d7fbb7da3b272d217";
 let pinError = "";
@@ -436,7 +436,7 @@ function draw() {
   else if (pantalla === 9) pantallaHerramientas();
   else if (pantalla === 10) pantallaCaja();
   else if (pantalla === 11) pantallaProduccion();
-  else if (pantalla === 12) pantallaCompras();
+  else if (pantalla === 12) pantallaInventario();
   else if (pantalla === 14) pantallaVentaDia();
   else                     pantallaMerma();
 
@@ -2278,8 +2278,8 @@ function construirTecladoNum() {
       numTeclas.push({ label: labels[r][c], x: xs[c], y: ys[r], w: 190, h: 82 });
 }
 
-function pedirNumero(titulo, sub, valor, listo) {
-  numEntrada = { titulo: titulo, sub: sub, texto: valor ? String(Math.round(valor * 100) / 100) : "", listo: listo };
+function pedirNumero(titulo, sub, valor, listo, sinPeso) {
+  numEntrada = { titulo: titulo, sub: sub, texto: valor ? String(Math.round(valor * 100) / 100) : "", listo: listo, sinPeso: !!sinPeso };
 }
 
 function escribirNum(t) {
@@ -2317,7 +2317,7 @@ function dibujarNumero() {
   fill(e.texto ? texto : color('#B4B9B4'));
   textStyle(BOLD);
   textSize(60);
-  text("$" + (e.texto || "0"), 350, NUM_Y + 195);
+  text((e.sinPeso ? "" : "$") + (e.texto || "0"), 350, NUM_Y + 195);
   textStyle(NORMAL);
 
   for (const t of numTeclas) {
@@ -2997,7 +2997,7 @@ const HERRAMIENTAS = [
   ["recetas", "Recetas",              "Ingredientes, costos y tiendas",       '#F2C230'],
   ["caja",    "Cuadre de caja",       "Efectivo, transferencias y tarjeta",   '#4F765F'],
   ["prod",    "Producción de mañana", "Cuánto preparar de cada postre",       '#5B3F8C'],
-  ["compras", "Lista de compras",     "Qué comprar y en qué tienda",          '#1F6F66'],
+  ["inv",     "Inventario",           "Cambia el stock del refri",            '#1F6F66'],
   ["merma",   "Merma y cortesías",    "Postres echados a perder o regalados", '#B4501A']
 ];
 let herrZonas = [];
@@ -3257,7 +3257,7 @@ function pressCaja(mx, my) {
 const DIAS_LARGO = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
 const EXTRA_PRODUCCION = 1.15;
 let prod = { fecha: null, ajustes: {} };
-let prodZonas = { filas: [], ant: null, sig: null, compras: null, reset: null };
+let prodZonas = { filas: [], ant: null, sig: null, reset: null };
 
 function mananaOperativa() {
   const d = fechaPorDefecto();
@@ -3421,21 +3421,6 @@ function pantallaProduccion() {
     text("Volver a sugerido", reset.x + reset.w / 2, reset.y + reset.h / 2);
     textAlign(LEFT, CENTER);
   }
-  y += 124;
-
-  const b = { x: 30, y: y, w: 640, h: 110 };
-  prodZonas.compras = b;
-  fill(0, 22);
-  rect(b.x, b.y + 6, b.w, b.h, 24);
-  fill('#1F6F66');
-  rect(b.x, b.y, b.w, b.h, 24);
-  fill(blanco);
-  textAlign(CENTER, CENTER);
-  textStyle(BOLD);
-  textSize(29);
-  text("VER LISTA DE COMPRAS  →", b.x + b.w / 2, b.y + b.h / 2);
-  textStyle(NORMAL);
-  textAlign(LEFT, CENTER);
   altoContenido = y + 140;
 }
 
@@ -3444,7 +3429,6 @@ function moverDiaProduccion(n) {
   f.setDate(f.getDate() + n);
   prod.fecha = f;
   prod.ajustes = {};
-  compras.hechos = {};
 }
 
 function pressProduccion(mx, my) {
@@ -3452,7 +3436,6 @@ function pressProduccion(mx, my) {
   const z = prodZonas;
   if (z.ant && enRect(mx, my, z.ant)) { moverDiaProduccion(-1); return; }
   if (z.sig && enRect(mx, my, z.sig)) { moverDiaProduccion(1); return; }
-  if (z.compras && enRect(mx, my, z.compras)) { irACompras(); return; }
   if (z.reset && Object.keys(prod.ajustes).length && enRect(mx, my, z.reset)) { prod.ajustes = {}; return; }
   for (const b of z.filas) {
     if (enRect(mx, my, b)) {
@@ -3463,21 +3446,10 @@ function pressProduccion(mx, my) {
 }
 
 // ============================================================
-// PANTALLA 12 - LISTA DE COMPRAS (con tus recetas y la produccion)
+// TIENDAS (codigos en los nombres de los insumos; los usa Recetas)
 // ============================================================
 
 const TIENDAS = { SAMS: "Sam's", CHD: "Chedraui", CHU: "Chuchin's", JO: "Josefina", DC: "DeCora", PAS: "Pastelero" };
-const ORDEN_TIENDAS = ["SAMS", "CHD", "CHU", "JO", "DC", "PAS", "OTRO"];
-const POCO_PAQUETE = 0.5;
-let compras = { hechos: {} };
-let comprasZonas = [];
-
-function irACompras() {
-  if (!prod.fecha) prod.fecha = mananaOperativa();
-  pantalla = 12;
-  if (!est.datos) cargarEstadisticas();
-  if (!rec.datos) cargarRecetas(true);
-}
 
 // La tienda va en el nombre (normalmente al final): SAMS, CHD, CHU, JO, DC o PAS
 function tiendaDe(nombre) {
@@ -3496,159 +3468,206 @@ function sinTienda(nombre) {
   return partes.join(" ");
 }
 
-// Para juntar el mismo insumo aunque este escrito un poco distinto
-function claveInsumo(nombre) {
-  return clave(sinTienda(nombre)).replace(/\s+/g, "")
-    .replace(/(\d)lts?\b/g, "$1l").replace(/(\d)grs?\b/g, "$1g")
-    .replace(/piezas|pzas|pzs/g, "pz");
+// ============================================================
+// PANTALLA 12 - INVENTARIO (cambiar el stock del refri sin abrir el Sheet)
+//  Cuenta igual que si lo cambiaras en la pestaña "Inventario":
+//  subir = lo que metiste al refri · bajar = vendido (salvo corregir algo
+//  que subiste hace menos de 10 min).
+//  Se manda la diferencia: si se vende algo mientras editas, no se pierde.
+// ============================================================
+
+let inv = { cambios: {}, estado: "listo", msg: "", avisoHasta: 0 };   // cambios[nombre] = { antes, nuevo }
+let invZonas = { filas: [], valores: [], guardar: null, descartar: null, recargar: null };
+
+function irAInventario() {
+  pantalla = 12;
+  inv.cambios = {};
+  recargarInventario();
 }
 
-function listaCompras() {
-  const plan = calcularPlan();
-  const mapa = {};
-  const agregar = (ing, uso) => {
-    if (!(uso > 0)) return;
-    const k = claveInsumo(ing.n);
-    if (!mapa[k]) mapa[k] = { clave: k, nombre: sinTienda(ing.n), tienda: tiendaDe(ing.n), cu: ing.cu || 0, uso: 0 };
-    mapa[k].uso += uso;
-  };
-  for (const it of plan.items) {
-    if (!it.receta || !it.valor) continue;
-    for (const ing of it.receta.ingredientes) if (ing.pp > 0) agregar(ing, ing.pp * it.tandas);
-    for (const ing of it.receta.desechables)  if (ing.pp > 0) agregar(ing, ing.pp * it.valor);   // van por pieza
+async function recargarInventario() {
+  if (inv.estado === "cargando" || inv.estado === "enviando") return;
+  inv.estado = "cargando";
+  await sincronizar(true);       // manda lo pendiente de este celular y trae el stock del Sheet
+  if (sync.estado === "ok") { inv.estado = "listo"; inv.msg = ""; }
+  else {
+    inv.estado = "error";
+    inv.msg = sync.estado === "pin" || sync.estado === "sinpin" ? "Falta el PIN de registro. Toca para reintentar."
+                                                                : "Sin conexión. Toca para reintentar.";
   }
-  const porTienda = {};
-  for (const k in mapa) {
-    const m = mapa[k];
-    m.paquetes = Math.max(1, Math.ceil(m.uso - 0.02));
-    m.costo = m.paquetes * m.cu;
-    m.valorUso = m.uso * m.cu;                 // lo que cuesta lo que de verdad usas
-    m.poco = m.uso < POCO_PAQUETE;             // usas menos de medio paquete: seguro ya lo tienes
-    (porTienda[m.tienda] = porTienda[m.tienda] || []).push(m);
-  }
-  // Primero lo que hay que comprar (de mas a menos), al final lo que casi no se usa
-  for (const t in porTienda) porTienda[t].sort((a, b) => (a.poco - b.poco) || (b.uso * b.cu - a.uso * a.cu));
-  return { plan: plan, porTienda: porTienda };
 }
 
-function pantallaCompras() {
-  const lista = listaCompras();
-  let sub = "Para producir lo del " + DIAS[prod.fecha.getDay()] + " " + prod.fecha.getDate() + " " + MESES[prod.fecha.getMonth()];
-  let colSub = textoSecundario;
-  if (rec.cargando) sub = "Leyendo recetas…";
-  else if (rec.error && !rec.datos) { sub = rec.error; colSub = rojo; }
-  encabezado("Lista de compras", sub, colSub);
-  comprasZonas = [];
-
-  const tiendas = ORDEN_TIENDAS.filter(t => lista.porTienda[t]);
-  if (!rec.datos || !tiendas.length) {
-    tarjeta(30, 170, 640, 200);
-    fill(textoSecundario);
-    textAlign(CENTER, CENTER);
-    textSize(24);
-    text(!rec.datos ? "Cargando tus recetas…" : "No hay nada que preparar para ese día", 350, 250);
-    textSize(20);
-    text("Ajusta las cantidades en Producción", 350, 295);
-    textAlign(LEFT, CENTER);
-    altoContenido = 400;
-    return;
+function productosInventario() {
+  const l = postres.map((n, k) => ({ nombre: n, k: k, fresas: false }));
+  l.push({ nombre: "Fresas", k: "fresas", fresas: true });
+  for (const p of l) {
+    p.actual = stockDe(p.nombre);
+    const c = inv.cambios[p.nombre];
+    p.valor = c ? c.nuevo : p.actual;
+    p.cambiado = !!c;
   }
+  return l;
+}
 
-  // Totales: valor de lo que usas y lo que falta comprar (sin contar lo que casi no se usa)
-  let valorUso = 0, pendiente = 0;
-  for (const t of tiendas) for (const m of lista.porTienda[t]) {
-    valorUso += m.valorUso;
-    if (!m.poco && !compras.hechos[m.clave]) pendiente += m.costo;
+function cambiarStock(p, nuevo) {
+  nuevo = Math.max(0, Math.round(nuevo * 10) / 10);
+  const c = inv.cambios[p.nombre];
+  const antes = c ? c.antes : p.actual;
+  if (nuevo === antes) delete inv.cambios[p.nombre];
+  else inv.cambios[p.nombre] = { antes: antes, nuevo: nuevo };
+}
+
+async function guardarInventario() {
+  const lista = Object.keys(inv.cambios).map(n => ({ producto: n, antes: inv.cambios[n].antes, nuevo: inv.cambios[n].nuevo }));
+  if (!lista.length || inv.estado === "enviando") return;
+  inv.estado = "enviando";
+  try {
+    await sincronizar(false);    // primero las ordenes pendientes de este celular
+    const j = await llamarMP({ accion: "stock", cambios: lista });
+    if (j.ok) {
+      pv.stock = j.stock || {};
+      for (const op of pv.pendientes) if (op.tipo === "orden" || op.tipo === "merma") moverStockLocal(op.piezas, -1);
+      guardarPV();
+      inv.cambios = {};
+      inv.estado = "listo";
+      inv.msg = "✓ Guardado en el Sheet";
+      inv.avisoHasta = millis() + 3000;
+    } else {
+      if (j.error === "PIN") borrarPin();
+      inv.estado = "error";
+      inv.msg = j.error === "PIN" ? "PIN de registro incorrecto. Toca GUARDAR otra vez."
+                                  : "El Sheet respondió con error: " + (j.error || "");
+    }
+  } catch (e) {
+    inv.estado = "error";
+    inv.msg = "Sin conexión: no se guardó. Toca GUARDAR otra vez.";
   }
+}
+
+function pantallaInventario() {
+  let sub = "Toca aquí para actualizar", colSub = null;
+  if (inv.estado === "cargando")      sub = "Consultando el Sheet…";
+  else if (inv.estado === "enviando") sub = "Guardando…";
+  else if (inv.estado === "error")    { sub = inv.msg; colSub = rojo; }
+  else if (millis() < inv.avisoHasta) { sub = inv.msg; colSub = color(VERDE_OPERATIVA); }
+  encabezado("Inventario", sub, colSub);
+  invZonas = { filas: [], valores: [], guardar: null, descartar: null, recargar: { x: 150, y: 105, w: 520, h: 46 } };
+
+  const lista = productosInventario();
   let y = 165;
-  tarjeta(30, y, 640, 150);
-  fill(textoSecundario);
-  textSize(19);
-  text("POR COMPRAR", 60, y + 36);
-  text("VALOR DE LO QUE USAS", 370, y + 36);
-  textStyle(BOLD);
-  textSize(34);
-  fill('#1F6F66');
-  text("$" + miles(pendiente), 60, y + 80);
-  fill(texto);
-  text("$" + miles(valorUso), 370, y + 80);
-  textStyle(NORMAL);
+  const alto = 70 + lista.length * 88;
+  tarjeta(30, y, 640, alto);
   fill(textoSecundario);
   textSize(18);
-  text("Paquetes completos que necesitas", 60, y + 118);
-  text("Ingredientes de esta producción", 370, y + 118);
-  y += 170;
+  textAlign(LEFT, CENTER);
+  text("PRODUCTO", 56, y + 38);
+  textAlign(CENTER, CENTER);
+  text("EN EL REFRI", 580, y + 38);
+  textAlign(LEFT, CENTER);
 
-  for (const t of tiendas) {
-    const items = lista.porTienda[t];
-    const sub = items.filter(m => !m.poco).reduce((a, m) => a + m.costo, 0);
-    const alto = 84 + items.length * 80 + 6;
-    tarjeta(30, y, 640, alto);
+  lista.forEach((p, i) => {
+    const yy = y + 104 + i * 88;
+    fill(p.fresas ? rojo : color(COLORES_PV[p.k][1]));
+    ellipse(64, yy - 10, 13, 13);
     fill(texto);
-    textStyle(BOLD);
-    textSize(29);
-    text(t === "OTRO" ? "Otros" : TIENDAS[t], 60, y + 44);
-    textStyle(NORMAL);
+    textSize(24);
+    text(recortar(p.fresas ? "Fresas (porciones)" : p.nombre, 380), 80, yy - 12);
     fill(textoSecundario);
-    textAlign(RIGHT, CENTER);
-    textSize(22);
-    text("$" + miles(sub), 640, y + 44);
-    textAlign(LEFT, CENTER);
-    stroke(borde); strokeWeight(1.5); line(60, y + 76, 640, y + 76); noStroke();
+    textSize(18);
+    let detalle;
+    if (p.cambiado) {
+      const dif = Math.round((p.valor - (p.actual || 0)) * 10) / 10;
+      detalle = "antes " + (p.actual === null ? "–" : cantidadTexto(p.actual)) + " · " +
+                (dif > 0 ? "metes " + cantidadTexto(dif) : "quitas " + cantidadTexto(-dif) + " (vendido)");
+      fill(color('#1F6F66'));
+    } else if (p.actual === null) detalle = "no se lleva inventario";
+    else if (p.actual <= 0) { detalle = "agotado"; fill(rojo); }
+    else if (p.actual <= 2) { detalle = "quedan pocos"; fill(rojo); }
+    else detalle = p.fresas ? "chica 1 · grande 1.5" : "";
+    text(detalle, 80, yy + 18);
 
-    items.forEach((m, i) => {
-      const yy = y + 116 + i * 80;
-      const hecho = !!compras.hechos[m.clave];
-      comprasZonas.push({ x: 30, y: yy - 38, w: 640, h: 78, clave: m.clave });
-      // casilla
-      if (hecho) { fill('#1F6F66'); ellipse(76, yy, 34, 34); fill(blanco); textAlign(CENTER, CENTER); textSize(22); text("✓", 76, yy); }
-      else { noFill(); stroke(color('#C2C6C2')); strokeWeight(2.5); ellipse(76, yy, 32, 32); noStroke(); }
-      textAlign(LEFT, CENTER);
-      const apagado = hecho || m.poco;
-      fill(apagado ? color('#9AA09A') : texto);
-      textSize(23);
-      text(recortar(m.nombre, 330), 108, yy - 12);
-      fill(apagado ? color('#B4B9B4') : textoSecundario);
-      textSize(18);
-      const usoTxt = m.uso < 1 ? Math.round(m.uso * 100) + "% del paquete" : (Math.round(m.uso * 10) / 10) + " paquetes";
-      text("usas " + usoTxt + " · $" + formato(m.cu) + " c/u", 108, yy + 16);
-      textAlign(RIGHT, CENTER);
-      if (m.poco) {
-        fill(hecho ? color('#B4B9B4') : color('#9AA09A'));
-        textSize(20);
-        text(hecho ? "Lo tengo" : "¿Ya tienes?", 640, yy - 12);
-        textSize(18);
-        text("si no, $" + miles(m.cu), 640, yy + 16);
-      } else {
-        fill(hecho ? color('#B4B9B4') : texto);
-        textStyle(BOLD);
-        textSize(24);
-        text("Compra " + m.paquetes, 640, yy - 12);
-        textStyle(NORMAL);
-        fill(hecho ? color('#C2C6C2') : textoSecundario);
-        textSize(19);
-        text("$" + miles(m.costo), 640, yy + 16);
-      }
-      textAlign(LEFT, CENTER);
-    });
-    y += alto + 18;
+    // - valor +
+    const menos = { x: 482, y: yy - 30, w: 60, h: 60, p: p, d: -1 };
+    const mas   = { x: 618, y: yy - 30, w: 60, h: 60, p: p, d: +1 };
+    const val   = { x: 544, y: yy - 34, w: 72, h: 68, p: p };
+    invZonas.filas.push(menos, mas);
+    invZonas.valores.push(val);
+    fill('#F2F4F2');
+    ellipse(512, yy, 50, 50);
+    ellipse(648, yy, 50, 50);
+    if (p.cambiado) { fill('#DDEFEC'); rect(val.x, val.y + 6, val.w, val.h - 12, 14); }
+    fill(textoSecundario);
+    textAlign(CENTER, CENTER);
+    textSize(32);
+    text("−", 512, yy - 2);
+    text("+", 648, yy - 2);
+    fill(p.cambiado ? color('#1F6F66') : (p.valor === null ? color('#B4B9B4') : texto));
+    textStyle(BOLD);
+    textSize(30);
+    text(p.valor === null ? "–" : cantidadTexto(p.valor), 580, yy);
+    textStyle(NORMAL);
+    textAlign(LEFT, CENTER);
+  });
+  y += alto + 20;
+
+  // Guardar
+  const n = Object.keys(inv.cambios).length;
+  const b = { x: 30, y: y, w: 640, h: 110 };
+  invZonas.guardar = b;
+  const activo = n > 0 && inv.estado !== "enviando";
+  if (activo) { fill(0, 22); rect(b.x, b.y + 6, b.w, b.h, 24); }
+  fill(activo ? color('#1F6F66') : color('#D9DCD9'));
+  rect(b.x, b.y, b.w, b.h, 24);
+  fill(activo ? blanco : color('#A5AAA5'));
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  textSize(28);
+  text(inv.estado === "enviando" ? "GUARDANDO…"
+       : (n ? "GUARDAR · " + n + (n === 1 ? " producto" : " productos") : "Sin cambios"), b.x + b.w / 2, b.y + b.h / 2);
+  textStyle(NORMAL);
+  y += 130;
+
+  if (n && inv.estado !== "enviando") {
+    const d = { x: 220, y: y - 6, w: 260, h: 56 };
+    invZonas.descartar = d;
+    fill(textoSecundario);
+    textSize(22);
+    text("Deshacer cambios", 350, y + 22);
+    y += 66;
   }
 
   fill(textoSecundario);
-  textAlign(CENTER, CENTER);
   textSize(20);
-  text("Calculado con tus recetas y lo de Producción.", 350, y + 10);
-  text("En gris: usas menos de medio paquete, revisa si ya tienes.", 350, y + 40);
+  textAlign(LEFT, TOP);
+  text("Usa − y + o toca el número para escribirlo. " +
+       "Subir el número = lo que metiste al refri (cuenta en Venta del día). " +
+       "Bajarlo = cuenta como vendido, salvo que corrijas algo que subiste hace menos de 10 minutos. " +
+       "Si se echó a perder o lo regalaste, usa Merma y cortesías.", 40, y, 620, 160);
   textAlign(LEFT, CENTER);
-  altoContenido = y + 70;
+  altoContenido = y + 170;
 }
 
-function pressCompras(mx, my) {
-  if (botonAtras.isOver(mx, my)) { pantalla = 11; return; }
-  for (const z of comprasZonas) {
-    if (enRect(mx, my, z)) { compras.hechos[z.clave] = !compras.hechos[z.clave]; return; }
+function pressInventario(mx, my) {
+  if (botonAtras.isOver(mx, my)) { irAHerramientas(); return; }
+  const z = invZonas;
+  if (z.recargar && enRect(mx, my, z.recargar)) { recargarInventario(); return; }
+  if (inv.estado === "enviando") return;
+  if (z.guardar && enRect(mx, my, z.guardar)) { guardarInventario(); return; }
+  if (z.descartar && enRect(mx, my, z.descartar)) { inv.cambios = {}; return; }
+  for (const b of z.filas) {
+    if (enRect(mx, my, b)) { cambiarStock(b.p, (b.p.valor || 0) + b.d); return; }
+  }
+  for (const b of z.valores) {
+    if (enRect(mx, my, b)) {
+      const p = b.p;
+      pedirNumero(p.fresas ? "Fresas (porciones)" : p.nombre,
+                  "¿Cuántos hay en el refri?" + (p.fresas ? " · chica 1, grande 1.5" : ""),
+                  p.valor || 0, v => cambiarStock(p, v), true);
+      return;
+    }
   }
 }
+
 
 // ============================================================
 // PANTALLA 14 - VENTA DEL DIA (segun el inventario del Sheet)
@@ -3826,7 +3845,7 @@ function pantallaVentaDia() {
   fill(textoSecundario);
   textSize(20);
   textAlign(LEFT, TOP);
-  text("Había = lo que había al empezar el día + lo que metiste al refri (cuando subes el stock en el Sheet). " +
+  text("Había = lo que había al empezar el día + lo que metiste al refri (cuando subes el stock en Inventario o en el Sheet). " +
        "Se actualiza sola cada 30 segundos.", 40, y, 620, 120);
   textAlign(LEFT, CENTER);
   altoContenido = y + 130;
@@ -5322,7 +5341,7 @@ function entrarModo(modo) {
   else if (modo === "recetas") irARecetas();
   else if (modo === "caja")    irACaja();
   else if (modo === "prod")    irAProduccion();
-  else if (modo === "compras") irACompras();
+  else if (modo === "inv")     irAInventario();
   else if (modo === "merma")   irAMerma();
   else if (modo === "venta")   irAVentaDia();
 }
@@ -5622,7 +5641,7 @@ function handlePress(mxRaw, myRaw) {
   } else if (pantalla === 9)  { pressHerramientas(mx, my); }
   else if (pantalla === 10)   { pressCaja(mx, my); }
   else if (pantalla === 11)   { pressProduccion(mx, my); }
-  else if (pantalla === 12)   { pressCompras(mx, my); }
+  else if (pantalla === 12)   { pressInventario(mx, my); }
   else if (pantalla === 14)   { pressVentaDia(mx, my); }
   else                        { pressMerma(mx, my); }
 }

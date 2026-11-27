@@ -438,6 +438,8 @@ function draw() {
   else if (pantalla === 11) pantallaProduccion();
   else if (pantalla === 12) pantallaInventario();
   else if (pantalla === 14) pantallaVentaDia();
+  else if (pantalla === 15) pantallaHistorialVenta();
+  else if (pantalla === 16) pantallaAparte();
   else                     pantallaMerma();
 
   // Las ventanas de abajo se pegan al borde de lo que se ve
@@ -516,150 +518,165 @@ function pantallaResultados() {
   textSize(26);
   text(subtituloResumen, 160, 128);
 
+  dibujarResumenDia({
+    postres: totalPostres, masVendido: postreMasVendido, cantMayor: cantidadMayor,
+    venta: ventaTotal, vendidos: vendidos, costo: costoProduccion, comision: comisionEmpleado,
+    gastos: totalGastos, operativa: profitLibre, sinEmpleado: profitSinEmpleado, pagos: pagosCierre
+  }, 0);
+
+  dibujarRegistro();
+  altoContenido = 1900;
+}
+
+// ------------------------------------------------------------
+// Dibujo del Resumen del Día (lo usan el Cierre y el Historial de Venta)
+//  r = { postres, masVendido, cantMayor, venta, vendidos[N+1], costo, comision,
+//        gastos, operativa, sinEmpleado, pagos }   ·   y0 = cuánto se baja todo
+//  Termina en y0 + 1728
+// ------------------------------------------------------------
+function dibujarResumenDia(r, y0) {
   // ---------- Totales ----------
   fill(blanco);
   noStroke();
-  rect(30, 165, 640, 275, 26);
+  rect(30, y0 + 165, 640, 275, 26);
 
+  textAlign(LEFT, CENTER);
   fill(textoSecundario);
   textSize(24);
-  text("POSTRES VENDIDOS", 65, 208);
+  text("POSTRES VENDIDOS", 65, y0 + 208);
 
   fill(texto);
   textSize(42);
-  text(totalPostres + " uds", 65, 258);
+  text(r.postres + " uds", 65, y0 + 258);
 
   fill(textoSecundario);
   textSize(24);
-  text("MÁS VENDIDO", 380, 208);
+  text("MÁS VENDIDO", 380, y0 + 208);
 
   fill(texto);
   textSize(28);
-  text(postreMasVendido, 380, 253);
+  text(recortar(r.masVendido, 260), 380, y0 + 253);
 
   fill(textoSecundario);
   textSize(23);
-  text(cantidadMayor + " unidades", 380, 285);
+  text(r.cantMayor + " unidades", 380, y0 + 285);
 
   stroke(borde);
   strokeWeight(2);
-  line(65, 318, 635, 318);
+  line(65, y0 + 318, 635, y0 + 318);
   noStroke();
 
   fill(textoSecundario);
   textSize(24);
-  text("VENTA TOTAL DEL DÍA", 65, 354);
+  text("VENTA TOTAL DEL DÍA", 65, y0 + 354);
 
   fill(verde);
   textSize(42);
-  text("$" + formato(ventaTotal), 65, 404);
+  text("$" + formato(r.venta), 65, y0 + 404);
 
   // ---------- Vendidos por postre ----------
   fill(blanco);
-  rect(30, 462, 640, 425, 26);
+  rect(30, y0 + 462, 640, 425, 26);
 
   fill(texto);
   textSize(31);
-  text("Vendidos por postre", 65, 505);
+  text("Vendidos por postre", 65, y0 + 505);
 
   for (let i = 0; i <= N; i++) {
-    let y = 548 + i * 33;
+    let y = y0 + 548 + i * 33;
 
     fill(textoSecundario);
     textSize(26);
     textAlign(LEFT, CENTER);
     text(NOMBRES_RESUMEN[i], 65, y);
 
-    fill(vendidos[i] > 0 ? texto : color('#B4B9B4'));
+    fill(r.vendidos[i] > 0 ? texto : color('#B4B9B4'));
     textSize(28);
     textAlign(RIGHT, CENTER);
-    text(vendidos[i], 635, y);
+    text(r.vendidos[i], 635, y);
   }
   textAlign(LEFT, CENTER);
 
   // ---------- Desglose de gastos ----------
   fill(blanco);
-  rect(30, 909, 640, 400, 26);
+  rect(30, y0 + 909, 640, 400, 26);
 
   fill(texto);
   textSize(31);
-  text("Desglose de Gastos", 65, 952);
+  text("Desglose de Gastos", 65, y0 + 952);
 
-  fila("Costo de los postres vendidos", "$" + formato(costoProduccion), 1003);
-  fila("Renta", "$" + formato(RENTA), 1046);
-  fila("Luz",   "$" + formato(LUZ),   1089);
-  fila("Gas",   "$" + formato(GAS),   1132);
-  fila("Empleado (18% de la venta)", "$" + formato(comisionEmpleado), 1175);
+  fila("Costo de los postres vendidos", "$" + formato(r.costo), y0 + 1003);
+  fila("Renta", "$" + formato(RENTA), y0 + 1046);
+  fila("Luz",   "$" + formato(LUZ),   y0 + 1089);
+  fila("Gas",   "$" + formato(GAS),   y0 + 1132);
+  fila("Empleado (18% de la venta)", "$" + formato(r.comision), y0 + 1175);
 
   stroke(borde);
   strokeWeight(2);
-  line(65, 1205, 635, 1205);
+  line(65, y0 + 1205, 635, y0 + 1205);
   noStroke();
 
   fill(texto);
   textSize(27);
   textAlign(LEFT, CENTER);
-  text("Total de gastos", 65, 1234);
+  text("Total de gastos", 65, y0 + 1234);
   textSize(30);
   textAlign(RIGHT, CENTER);
-  text("$" + formato(totalGastos), 635, 1234);
+  text("$" + formato(r.gastos), 635, y0 + 1234);
   textAlign(LEFT, CENTER);
 
   // Ahorro: informativo, NO se resta del profit
   fill(textoSecundario);
   textSize(24);
   textAlign(LEFT, CENTER);
-  text("Ahorro sugerido (no se resta)", 65, 1278);
+  text("Ahorro sugerido (no se resta)", 65, y0 + 1278);
   textSize(27);
   textAlign(RIGHT, CENTER);
-  text("$" + formato(AHORRO), 635, 1278);
+  text("$" + formato(AHORRO), 635, y0 + 1278);
   textAlign(LEFT, CENTER);
 
   // ---------- Profit libre (pagando al empleado) ----------
-  fill(profitLibre < 0 ? rojo : verde);
-  rect(30, 1325, 640, 122, 26);
+  fill(r.operativa < 0 ? rojo : verde);
+  rect(30, y0 + 1325, 640, 122, 26);
 
   fill(blanco);
   textSize(25);
-  text("UTILIDAD OPERATIVA (PAGANDO AL EMPLEADO)", 65, 1364);
+  text("UTILIDAD OPERATIVA (PAGANDO AL EMPLEADO)", 65, y0 + 1364);
 
   textSize(42);
-  text("$" + formato(profitLibre), 65, 1411);
+  text("$" + formato(r.operativa), 65, y0 + 1411);
 
   // ---------- Profit libre si vendiste tu ----------
   fill(blanco);
-  rect(30, 1460, 640, 122, 26);
+  rect(30, y0 + 1460, 640, 122, 26);
 
   fill(textoSecundario);
   textSize(25);
-  text("UTILIDAD OPERATIVA SI VENDISTE TÚ", 65, 1499);
+  text("UTILIDAD OPERATIVA SI VENDISTE TÚ", 65, y0 + 1499);
 
-  fill(profitSinEmpleado < 0 ? rojo : verde);
+  fill(r.sinEmpleado < 0 ? rojo : verde);
   textSize(42);
-  text("$" + formato(profitSinEmpleado), 65, 1546);
+  text("$" + formato(r.sinEmpleado), 65, y0 + 1546);
 
   // ---------- Como pagaron ----------
   fill(blanco);
-  rect(30, 1600, 640, 128, 26);
+  rect(30, y0 + 1600, 640, 128, 26);
   fill(textoSecundario);
   textSize(19);
-  text("CÓMO PAGARON", 65, 1636);
+  text("CÓMO PAGARON", 65, y0 + 1636);
   PAGOS.forEach(([k, etq, col], i) => {
     const x = 65 + i * 200;
     fill(col);
-    ellipse(x + 7, 1684, 12, 12);
+    ellipse(x + 7, y0 + 1684, 12, 12);
     fill(textoSecundario);
     textSize(19);
-    text(etq, x + 22, 1672);
+    text(etq, x + 22, y0 + 1672);
     fill(texto);
     textStyle(BOLD);
     textSize(26);
-    text("$" + miles(pagosCierre[k]), x + 22, 1702);
+    text("$" + miles((r.pagos || {})[k] || 0), x + 22, y0 + 1702);
     textStyle(NORMAL);
   });
-
-  dibujarRegistro();
-  altoContenido = 1900;
 }
 
 // ============================================================
@@ -1056,7 +1073,7 @@ async function sincronizar(interactivo) {
       pv.stock = j.stock || {};
       // Lo que se ordeno mientras se enviaba todavia no lo resta el Sheet
       for (const op of pv.pendientes) {
-        if (op.tipo === "orden") moverStockLocal(op.piezas, -1);
+        if (op.tipo === "orden" || op.tipo === "aparte") moverStockLocal(op.piezas, -1);
       }
       guardarPV();
       sync.estado = "ok";
@@ -2353,10 +2370,12 @@ const PAGOS = [
 ];
 const NOMBRE_PAGO = { efectivo: "Efectivo", transferencia: "Transferencia", tarjeta: "Tarjeta" };
 let cobro = null;                // { total } mientras se elige como pago
-const PAGO_Y = 800, PAGO_FIN = 1495;
+const PAGO_Y = 678, PAGO_FIN = 1495;
+// "Pago Exacto": efectivo sin cambio -> registra la orden de una vez (no pasa por "¿Con cuánto pagó?")
+const PAGO_EXACTO = ["exacto", "Pago Exacto · Efectivo", '#1E6B3E'];
 
 function botonesPago() {
-  return PAGOS.map((p, k) => ({ x: 50, y: PAGO_Y + 205 + k * 122, w: 600, h: 106, pago: p[0], etq: p[1], col: p[2] }));
+  return [PAGO_EXACTO].concat(PAGOS).map((p, k) => ({ x: 50, y: PAGO_Y + 205 + k * 122, w: 600, h: 106, pago: p[0], etq: p[1], col: p[2] }));
 }
 
 function dibujarCobro() {
@@ -2394,7 +2413,7 @@ function dibujarCobro() {
   }
   fill(textoSecundario);
   textSize(22);
-  text("Toca arriba para regresar a la orden", 350, PAGO_Y + 205 + 3 * 122 + 20);
+  text("Toca arriba para regresar a la orden", 350, PAGO_Y + 205 + 4 * 122 + 20);
   textAlign(LEFT, CENTER);
 }
 
@@ -2404,7 +2423,8 @@ function pressCobro(mx, my) {
     if (enRect(mx, my, b)) {
       const total = cobro.total;
       cobro = null;
-      if (b.pago === "tarjeta") cobrarConTerminal(total);   // se manda a la terminal Mercado Pago
+      if (b.pago === "exacto") ordenar("efectivo", null, total);   // pagó justo: sin pantalla de cambio
+      else if (b.pago === "tarjeta") cobrarConTerminal(total);   // se manda a la terminal Mercado Pago
       else if (b.pago === "efectivo") efe = { total: total, paso: "monto", recibido: 0 };
       else ordenar(b.pago);
       return;
@@ -2991,8 +3011,12 @@ function ordenesDelDia() {
 // PANTALLA 9 - HERRAMIENTAS (cada una pide Face ID o PIN de dueño)
 // ============================================================
 
+const COLOR_HIST = '#D6337A';     // rosa: Historial de Venta (distinto a los demás botones)
+const COLOR_APARTE = '#343A40';   // gris carbón: Mi venta aparte
 const HERRAMIENTAS = [
-  ["venta",   "Venta del día",        "Lo que lleva vendido tu empleado",     '#2E86C1'],
+  ["venta",   "Venta del día",        "Lo que lleva vendido tu empleado",     '#C8102E'],
+  ["hist",    "Historial de Venta",   "Los últimos 3 cierres, día por día",   COLOR_HIST],
+  ["aparte",  "Mi venta aparte",      "Postres que sacas para venderlos tú",  COLOR_APARTE],
   ["estad",  "Estadísticas",         "Ventas, utilidades y gráficas",        '#3D93CB'],
   ["recetas", "Recetas",              "Ingredientes, costos y tiendas",       '#F2C230'],
   ["caja",    "Cuadre de caja",       "Efectivo, transferencias y tarjeta",   '#4F765F'],
@@ -3735,11 +3759,11 @@ function calcularVentaDia(d) {
       continue;
     }
     const precio = precioDe(p.nombre);
-    const vendidos = Math.max(0, Math.round((hubo - (Number(p.merma) || 0) - p.actual) * 100) / 100);
+    const vendidos = Math.max(0, Math.round((hubo - (Number(p.merma) || 0) - (Number(p.aparte) || 0) - p.actual) * 100) / 100);
     const v = precio === null ? 0 : vendidos * precio;
     venta += v;
     filas.push({ nombre: p.nombre, hubo: hubo, queda: p.actual, merma: Number(p.merma) || 0,
-                 vendidos: vendidos, venta: v, sinPrecio: precio === null });
+                 aparte: Number(p.aparte) || 0, vendidos: vendidos, venta: v, sinPrecio: precio === null });
   }
   return { filas: filas, venta: venta, registrado: registrado };
 }
@@ -3800,7 +3824,7 @@ function pantallaVentaDia() {
   // ---------- Por postre ----------
   const filas = r.filas;
   let alto = 110;
-  for (const f of filas) alto += f.merma || f.porciones ? 86 : 62;
+  for (const f of filas) alto += f.merma || f.porciones || f.aparte ? 86 : 62;
   tarjeta(30, y, 640, alto);
   fill(textoSecundario);
   textSize(20);
@@ -3816,7 +3840,7 @@ function pantallaVentaDia() {
 
   let yy = y + 104;
   for (const f of filas) {
-    const extra = f.merma || f.porciones;
+    const extra = f.merma || f.porciones || f.aparte;
     textAlign(LEFT, CENTER);
     fill(texto);
     textSize(24);
@@ -3833,10 +3857,13 @@ function pantallaVentaDia() {
     textStyle(NORMAL);
     if (extra) {
       textAlign(LEFT, CENTER);
-      fill(f.merma ? color('#B4501A') : textoSecundario);
+      fill(f.merma ? color('#B4501A') : f.aparte ? color(COLOR_APARTE) : textoSecundario);
       textSize(19);
+      const notas = [];
+      if (f.merma)  notas.push("− " + numCorto(f.merma) + " de merma o cortesía");
+      if (f.aparte) notas.push("− " + numCorto(f.aparte) + " te llevaste tú");
       text(f.porciones ? "En porciones (chica 1, grande 1.5) · venta con toppings"
-                       : "− " + numCorto(f.merma) + " de merma o cortesía (no cuenta)", 60, yy + 30);
+                       : notas.join(" · ") + " (no cuenta)", 60, yy + 30);
     }
     yy += extra ? 86 : 62;
   }
@@ -3854,6 +3881,496 @@ function pantallaVentaDia() {
 function pressVentaDia(mx, my) {
   if (botonAtras.isOver(mx, my)) { irAHerramientas(); return; }
   if (enRect(mx, my, { x: 150, y: 105, w: 520, h: 46 })) cargarVentaDia();
+}
+
+// ============================================================
+// PANTALLA 15 - HISTORIAL DE VENTA
+//  Los ultimos 3 cierres registrados en el Sheet, con el mismo
+//  Resumen que ve el empleado al cerrar + la merma de ese dia.
+// ============================================================
+
+let hventa = { estado: "listo", datos: null, msg: "", sel: 0 };
+let histZonas = [];
+
+function irAHistorialVenta() {
+  pantalla = 15;
+  hventa.sel = 0;
+  if (!hventa.datos) {
+    try { hventa.datos = JSON.parse(localStorage.getItem("bonbon_hist") || "null"); } catch (e) {}
+  }
+  cargarHistorialVenta();
+}
+
+async function cargarHistorialVenta() {
+  if (hventa.estado === "cargando") return;
+  hventa.estado = "cargando";
+  try {
+    const j = await llamarMP({ accion: "historial" });
+    if (j.ok) {
+      hventa.datos = { dias: j.dias || [], hora: horaTexto(new Date()) };
+      hventa.estado = "ok"; hventa.msg = "";
+      if (hventa.sel >= hventa.datos.dias.length) hventa.sel = 0;
+      try { localStorage.setItem("bonbon_hist", JSON.stringify(hventa.datos)); } catch (e) {}
+    } else {
+      if (j.error === "PIN") borrarPin();
+      hventa.estado = "error";
+      hventa.msg = j.error === "PIN" ? "PIN de registro incorrecto. Toca para reintentar."
+                                   : "El Sheet respondió con error (¿ya implementaste la versión 19?)";
+    }
+  } catch (e) {
+    hventa.estado = "error";
+    hventa.msg = "Sin conexión. Toca para reintentar.";
+  }
+}
+
+// Un dia del Sheet -> los mismos datos que usa el Resumen del cierre
+function resumenDeHistorial(d) {
+  const vend = (d.vendidos || []).slice(0, N);
+  while (vend.length < N) vend.push(0);
+  vend.push((Number(d.fc) || 0) + (Number(d.fg) || 0));
+  let mas = "-", cant = 0;
+  vend.forEach((v, i) => { if (v > cant) { cant = v; mas = NOMBRES_RESUMEN[i]; } });
+  return {
+    postres: d.postres, masVendido: mas, cantMayor: cant, venta: d.venta, vendidos: vend,
+    costo: d.costo, comision: d.comision, gastos: d.costo + d.fijos + d.comision,
+    operativa: d.operativa, sinEmpleado: d.sinEmpleado, pagos: d.pagos
+  };
+}
+
+function etiquetaDia(iso) {
+  const hoy = diaOperativo();
+  const f = fechaDesdeIso(iso);
+  const ayer = new Date(fechaDesdeIso(hoy)); ayer.setDate(ayer.getDate() - 1);
+  if (iso === hoy) return "Hoy";
+  if (iso === isoFecha(ayer)) return "Ayer";
+  return DIAS[f.getDay()] + " " + f.getDate() + " " + MESES[f.getMonth()];
+}
+
+function pantallaHistorialVenta() {
+  const datos = hventa.datos;
+  let sub, colSub;
+  if (hventa.estado === "cargando") sub = datos ? "Actualizando…" : "Consultando el Sheet…";
+  else if (hventa.estado === "error") { sub = hventa.msg; colSub = rojo; }
+  else if (datos) sub = "Actualizado " + datos.hora + " · toca para actualizar";
+  else sub = "Toca para actualizar";
+  encabezado("Historial de Venta", sub, colSub);
+
+  histZonas = [];
+  const dias = (datos && datos.dias) || [];
+  if (!dias.length) {
+    if (datos) {
+      tarjeta(30, 165, 640, 140);
+      fill(textoSecundario);
+      textAlign(CENTER, CENTER);
+      textSize(24);
+      text("Todavía no hay cierres registrados en el Sheet", 350, 235);
+      textAlign(LEFT, CENTER);
+    }
+    altoContenido = 400;
+    return;
+  }
+
+  // ---------- Pestañas: un boton por dia ----------
+  const w = (640 - (dias.length - 1) * 14) / dias.length;
+  dias.forEach((d, k) => {
+    const b = { x: 30 + k * (w + 14), y: 165, w: w, h: 84, k: k };
+    histZonas.push(b);
+    const sel = k === hventa.sel;
+    noStroke();
+    fill(sel ? color(COLOR_HIST) : blanco);
+    rect(b.x, b.y, b.w, b.h, 22);
+    fill(sel ? blanco : texto);
+    textAlign(CENTER, CENTER);
+    textStyle(sel ? BOLD : NORMAL);
+    textSize(26);
+    text(etiquetaDia(d.f), b.x + b.w / 2, b.y + b.h / 2);
+    textStyle(NORMAL);
+  });
+
+  const d = dias[Math.min(hventa.sel, dias.length - 1)];
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textSize(30);
+  text(textoFecha(fechaDesdeIso(d.f)), 40, 292);
+  fill(textoSecundario);
+  textSize(21);
+  if (d.registrado) text("Cierre registrado el " + d.registrado, 40, 328);
+  else if (d.cierre === false) { fill(rojo); text("Tu empleado no registró cierre este día", 40, 328); }
+
+  // ---------- El mismo Resumen del cierre (lo de tu empleado) ----------
+  let y;
+  if (d.cierre !== false) {
+    const y0 = 222;                       // la primera tarjeta queda en y0 + 165
+    seccionHist("LO DE TU EMPLEADO · como lo vio al cerrar", 362);
+    dibujarResumenDia(resumenDeHistorial(d), y0);
+    y = y0 + 1728 + 40;
+  } else {
+    y = 370;
+  }
+
+  // ---------- Tu venta aparte + total de los dos ----------
+  y = dibujarAparteHist(d, y);
+  y = dibujarTotalHist(d, y);
+
+  // ---------- Merma y cortesias de ese dia ----------
+  const mer = d.merma || [];
+  const alto = mer.length ? 110 + mer.length * 46 + 56 : 120;
+  tarjeta(30, y, 640, alto);
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textSize(31);
+  text("Merma y cortesías", 65, y + 48);
+  if (!mer.length) {
+    fill(textoSecundario);
+    textSize(24);
+    text("Sin merma ni cortesías ese día", 65, y + 90);
+  } else {
+    let yy = y + 100;
+    let costo = 0;
+    for (const m of mer) {
+      costo += Number(m.c) || 0;
+      fill(textoSecundario);
+      textSize(24);
+      textAlign(LEFT, CENTER);
+      text(recortar(numCorto(m.n) + " × " + m.p + (m.t && m.t !== "Merma" ? " (" + m.t.toLowerCase() + ")" : ""), 430), 65, yy);
+      fill(texto);
+      textAlign(RIGHT, CENTER);
+      text("$" + formato(m.c), 635, yy);
+      yy += 46;
+    }
+    stroke(borde); strokeWeight(2); line(65, yy - 14, 635, yy - 14); noStroke();
+    fill(color('#B4501A'));
+    textSize(26);
+    textAlign(LEFT, CENTER);
+    text("Costo de la merma (no se resta)", 65, yy + 16);
+    textAlign(RIGHT, CENTER);
+    text("$" + formato(costo), 635, yy + 16);
+    textAlign(LEFT, CENTER);
+  }
+  y += alto + 30;
+  altoContenido = y + 40;
+}
+
+function seccionHist(t, y) {
+  fill(textoSecundario);
+  textAlign(LEFT, CENTER);
+  textStyle(BOLD);
+  textSize(20);
+  text(t, 40, y);
+  textStyle(NORMAL);
+}
+
+// Tarjeta "Tu venta aparte" de ese dia
+function dibujarAparteHist(d, y) {
+  const du = d.dueno || { venta: 0, costo: 0, piezas: 0, productos: [] };
+  const prods = (du.productos || []).filter(p => p.n);
+  seccionHist("TU VENTA APARTE", y);
+  y += 24;
+  const alto = prods.length ? 96 + prods.length * 44 + 170 : 110;
+  tarjeta(30, y, 640, alto);
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textSize(31);
+  text("Tu venta aparte", 65, y + 48);
+  if (!prods.length) {
+    fill(textoSecundario);
+    textSize(23);
+    text("No sacaste postres para vender este día", 65, y + 84);
+    return y + alto + 30;
+  }
+  let yy = y + 100;
+  for (const p of prods) {
+    const precio = precioDe(p.p);
+    fill(textoSecundario);
+    textSize(24);
+    textAlign(LEFT, CENTER);
+    text(numCorto(p.n) + " × " + p.p, 65, yy);
+    fill(texto);
+    textAlign(RIGHT, CENTER);
+    text(precio === null ? "" : "$" + formato(precio * p.n), 635, yy);
+    textAlign(LEFT, CENTER);
+    yy += 44;
+  }
+  stroke(borde); strokeWeight(2); line(65, yy - 14, 635, yy - 14); noStroke();
+  filaHist("Tu venta", "$" + formato(du.venta), yy + 22, texto);
+  filaHist("Costo de esos postres", "$" + formato(du.costo), yy + 66, textoSecundario);
+  filaHist("Te queda (sin 18 %)", "$" + formato(du.venta - du.costo), yy + 112, color(VERDE_OPERATIVA), true);
+  return y + alto + 30;
+}
+
+// Tarjeta "Total del dia": tu venta + la de tu empleado, gastos fijos una sola vez
+function dibujarTotalHist(d, y) {
+  const du = d.dueno || { venta: 0, costo: 0 };
+  const fijos = Number(d.fijos) || (RENTA + LUZ + GAS);
+  const ventaTot = d.venta + du.venta;
+  const gastos = d.costo + du.costo + d.comision + fijos;
+  const utilidad = ventaTot - gastos;
+
+  seccionHist("TOTAL DEL DÍA · TÚ + TU EMPLEADO", y);
+  y += 24;
+  const alto = 590;
+  tarjeta(30, y, 640, alto);
+  fill(texto);
+  textAlign(LEFT, CENTER);
+  textSize(31);
+  text("Total del día", 65, y + 48);
+
+  filaHist("Venta de tu empleado", "$" + formato(d.venta), y + 104, texto);
+  filaHist("Tu venta aparte", "$" + formato(du.venta), y + 146, texto);
+  stroke(borde); strokeWeight(2); line(65, y + 172, 635, y + 172); noStroke();
+  filaHist("VENTA TOTAL", "$" + formato(ventaTot), y + 204, color('#2E86C1'), true);
+
+  filaHist("Costo de todos los postres", "− $" + formato(d.costo + du.costo), y + 262, textoSecundario);
+  filaHist("Empleado (18% de SU venta)", "− $" + formato(d.comision), y + 304, textoSecundario);
+  filaHist("Renta", "− $" + formato(RENTA), y + 346, textoSecundario);
+  filaHist("Luz", "− $" + formato(LUZ), y + 388, textoSecundario);
+  filaHist("Gas", "− $" + formato(GAS), y + 430, textoSecundario);
+  stroke(borde); strokeWeight(2); line(65, y + 456, 635, y + 456); noStroke();
+  filaHist("Total de gastos", "$" + formato(gastos), y + 488, texto, true);
+  fill(textoSecundario);
+  textSize(19);
+  text("Renta, luz y gas se restan una sola vez, del total de los dos.", 65, y + 540);
+
+  y += alto + 14;
+  fill(utilidad < 0 ? rojo : color(COLOR_HIST));
+  rect(30, y, 640, 130, 26);
+  fill(blanco);
+  textSize(24);
+  text("UTILIDAD OPERATIVA TOTAL DEL DÍA", 65, y + 40);
+  textStyle(BOLD);
+  textSize(46);
+  text("$" + formato(utilidad), 65, y + 92);
+  textStyle(NORMAL);
+  return y + 130 + 30;
+}
+
+function filaHist(etq, valor, y, col, negrita) {
+  fill(negrita ? texto : textoSecundario);
+  textSize(25);
+  textAlign(LEFT, CENTER);
+  if (negrita) textStyle(BOLD);
+  text(etq, 65, y);
+  fill(col);
+  textSize(negrita ? 30 : 27);
+  textAlign(RIGHT, CENTER);
+  text(valor, 635, y);
+  textStyle(NORMAL);
+  textAlign(LEFT, CENTER);
+}
+
+function pressHistorialVenta(mx, my) {
+  if (botonAtras.isOver(mx, my)) { irAHerramientas(); return; }
+  if (enRect(mx, my, { x: 150, y: 105, w: 520, h: 46 })) { cargarHistorialVenta(); return; }
+  for (const z of histZonas) if (enRect(mx, my, z)) { hventa.sel = z.k; return; }
+}
+
+// ============================================================
+// PANTALLA 16 - MI VENTA APARTE (el dueño)
+//  Postres que el dueño saca del refri para venderlos él en otros lugares, al precio
+//  del menú. Se restan del inventario y NO cuentan como venta del empleado (sin 18 %).
+//  Se anotan al sacarlos; lo que no vendió lo regresa con "Devolví al refri".
+//  Van a la pestaña "Venta aparte" con la misma cola que las órdenes (op "aparte").
+// ============================================================
+
+const APARTE_KEY = "bonbon_aparte";
+let aparte = { modo: "sacar", cant: {}, aviso: "", avisoHasta: 0 };
+let aparteZonas = { filas: [], modos: [], registrar: null };
+
+// Movimientos de hoy hechos en este celular: { fecha, movs: [{ hora, k, n }] }
+function leerAparteLocal() {
+  asegurarDia();
+  let a = null;
+  try { a = JSON.parse(localStorage.getItem(APARTE_KEY) || "null"); } catch (e) {}
+  if (!a || a.fecha !== pv.fecha) a = { fecha: pv.fecha, movs: [] };
+  return a;
+}
+
+// Cuantas piezas de cada postre llevas hoy (sacadas − devueltas)
+function llevasHoy() {
+  const llevas = new Array(N).fill(0);
+  for (const m of leerAparteLocal().movs) llevas[m.k] += m.n;
+  return llevas;
+}
+
+function irAAparte() {
+  pantalla = 16;
+  aparte.cant = {};
+  aparte.modo = "sacar";
+  sincronizar(false);
+}
+
+function registrarAparte() {
+  const ks = Object.keys(aparte.cant).map(Number).filter(k => aparte.cant[k] > 0);
+  if (!ks.length) return;
+  const local = leerAparteLocal();
+  const hora = horaTexto(new Date());
+  const signo = aparte.modo === "sacar" ? 1 : -1;
+  let piezasTot = 0;
+  for (const k of ks) {
+    const n = aparte.cant[k] * signo;
+    piezasTot += aparte.cant[k];
+    pv.pendientes.push({
+      tipo: "aparte", id: pv.fecha + "-a-" + Date.now().toString(36) + "-" + k,
+      fecha: pv.fecha, hora: hora, producto: postres[k], cantidad: n,
+      precio: precios[k], costo: Math.round(costos[k] * 100) / 100,
+      piezas: { [postres[k]]: n }
+    });
+    moverStockLocal({ [postres[k]]: n }, -1);
+    local.movs.push({ hora: hora, k: k, n: n });
+  }
+  try { localStorage.setItem(APARTE_KEY, JSON.stringify(local)); } catch (e) {}
+  aparte.cant = {};
+  aparte.aviso = (signo > 0 ? "✓ Sacaste " : "✓ Devolviste ") + piezasTot + (piezasTot === 1 ? " pieza" : " piezas");
+  aparte.avisoHasta = millis() + 2500;
+  guardarPV();
+  sincronizar(true);
+}
+
+function pantallaAparte() {
+  const conAviso = millis() < aparte.avisoHasta;
+  encabezado("Mi venta aparte", conAviso ? aparte.aviso : "Se resta del refri · no es venta del empleado",
+             conAviso ? color(VERDE_OPERATIVA) : null);
+
+  aparteZonas = { filas: [], modos: [], registrar: null };
+  [["sacar", "Saqué del refri", "Para venderlos yo"], ["devolver", "Devolví al refri", "Lo que no vendí"]].forEach(([m, t, sub], k) => {
+    const b = { x: 30 + k * 325, y: 160, w: 315, h: 92, modo: m };
+    aparteZonas.modos.push(b);
+    const sel = aparte.modo === m;
+    if (sel) { fill(COLOR_APARTE); noStroke(); } else { fill(blanco); stroke(borde); strokeWeight(2); }
+    rect(b.x, b.y, b.w, b.h, 22);
+    noStroke();
+    fill(sel ? blanco : texto);
+    textAlign(CENTER, CENTER);
+    textStyle(BOLD);
+    textSize(27);
+    text(t, b.x + b.w / 2, b.y + 34);
+    textStyle(NORMAL);
+    if (sel) fill(255, 210); else fill(textoSecundario);
+    textSize(19);
+    text(sub, b.x + b.w / 2, b.y + 66);
+  });
+  textAlign(LEFT, CENTER);
+
+  const llevas = llevasHoy();
+  const sacar = aparte.modo === "sacar";
+  let y = 272;
+  const alto = 30 + N * 82;
+  tarjeta(30, y, 640, alto);
+  let piezasTot = 0, ventaTot = 0;
+  for (let k = 0; k < N; k++) {
+    const yy = y + 56 + k * 82;
+    const n = aparte.cant[k] || 0;
+    piezasTot += n; ventaTot += n * precios[k];
+    const stock = stockDe(postres[k]);
+    const puede = sacar || llevas[k] > 0;
+    fill(color(COLORES_PV[k][1]));
+    ellipse(64, yy - 10, 13, 13);
+    fill(puede ? texto : color('#B4B9B4'));
+    textSize(24);
+    text(postres[k], 80, yy - 12);
+    fill(textoSecundario);
+    textSize(18);
+    text(sacar ? (stock === null ? "" : "hay " + cantidadTexto(stock) + " · ") + "$" + formato(precios[k]) + " c/u"
+               : "llevas " + llevas[k], 80, yy + 16);
+    const menos = { x: 482, y: yy - 30, w: 60, h: 60, k: k, d: -1 };
+    const mas   = { x: 618, y: yy - 30, w: 60, h: 60, k: k, d: +1 };
+    aparteZonas.filas.push(menos, mas);
+    fill('#F2F4F2');
+    ellipse(512, yy, 50, 50);
+    ellipse(648, yy, 50, 50);
+    fill(textoSecundario);
+    textAlign(CENTER, CENTER);
+    textSize(32);
+    text("−", 512, yy - 2);
+    text("+", 648, yy - 2);
+    fill(n ? color(COLOR_APARTE) : color('#B4B9B4'));
+    textStyle(BOLD);
+    textSize(30);
+    text(n, 580, yy);
+    textStyle(NORMAL);
+    textAlign(LEFT, CENTER);
+  }
+  y += alto + 20;
+
+  const b = { x: 30, y: y, w: 640, h: 110 };
+  aparteZonas.registrar = b;
+  const activo = piezasTot > 0;
+  if (activo) { fill(0, 22); rect(b.x, b.y + 6, b.w, b.h, 24); }
+  fill(activo ? color(COLOR_APARTE) : color('#D9DCD9'));
+  rect(b.x, b.y, b.w, b.h, 24);
+  fill(activo ? blanco : color('#A5AAA5'));
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  textSize(28);
+  text(!activo ? "Elige cuántas piezas"
+       : (sacar ? "SACAR · " : "DEVOLVER · ") + piezasTot + " pzs · $" + formato(ventaTot), b.x + b.w / 2, b.y + b.h / 2);
+  textStyle(NORMAL);
+  textAlign(LEFT, CENTER);
+  y += 130;
+
+  // ---------- Lo que llevas hoy ----------
+  const lineas = [];
+  let venta = 0, costo = 0;
+  for (let k = 0; k < N; k++) {
+    if (!llevas[k]) continue;
+    lineas.push(k);
+    venta += llevas[k] * precios[k];
+    costo += llevas[k] * costos[k];
+  }
+  const altoHoy = 100 + lineas.length * 46 + (lineas.length ? 190 : 40);
+  tarjeta(30, y, 640, altoHoy);
+  fill(texto);
+  textSize(29);
+  text("Hoy llevas", 60, y + 46);
+  let yy = y + 100;
+  if (!lineas.length) {
+    fill(textoSecundario);
+    textSize(23);
+    text("Todavía no sacas postres hoy", 60, yy);
+  }
+  for (const k of lineas) {
+    fill(textoSecundario);
+    textSize(23);
+    textAlign(LEFT, CENTER);
+    text(llevas[k] + " × " + postres[k], 60, yy);
+    fill(texto);
+    textAlign(RIGHT, CENTER);
+    text("$" + formato(llevas[k] * precios[k]), 640, yy);
+    textAlign(LEFT, CENTER);
+    yy += 46;
+  }
+  if (lineas.length) {
+    stroke(borde); strokeWeight(2); line(60, yy - 14, 640, yy - 14); noStroke();
+    filaHist("Tu venta", "$" + formato(venta), yy + 22, texto);
+    filaHist("Costo de esos postres", "− $" + formato(costo), yy + 66, textoSecundario);
+    filaHist("Te queda (sin 18 %)", "$" + formato(venta - costo), yy + 112, color(VERDE_OPERATIVA), true);
+  }
+  y += altoHoy + 16;
+
+  fill(textoSecundario);
+  textSize(20);
+  textAlign(LEFT, TOP);
+  text("La renta, luz y gas se restan una sola vez en el total del día (Historial de Venta), " +
+       "junto con la venta de tu empleado. Lo que anotes aquí se manda al Sheet aunque no haya internet en ese momento.",
+       40, y, 620, 120);
+  textAlign(LEFT, CENTER);
+  altoContenido = y + 140;
+}
+
+function pressAparte(mx, my) {
+  if (botonAtras.isOver(mx, my)) { irAHerramientas(); return; }
+  for (const b of aparteZonas.modos) {
+    if (enRect(mx, my, b)) { if (aparte.modo !== b.modo) { aparte.modo = b.modo; aparte.cant = {}; } return; }
+  }
+  if (aparteZonas.registrar && enRect(mx, my, aparteZonas.registrar)) { registrarAparte(); return; }
+  for (const b of aparteZonas.filas) {
+    if (enRect(mx, my, b)) {
+      let n = Math.max(0, (aparte.cant[b.k] || 0) + b.d);
+      if (aparte.modo === "devolver") n = Math.min(n, llevasHoy()[b.k]);   // no regresas más de lo que sacaste
+      aparte.cant[b.k] = n;
+      return;
+    }
+  }
 }
 
 // ============================================================
@@ -5344,6 +5861,8 @@ function entrarModo(modo) {
   else if (modo === "inv")     irAInventario();
   else if (modo === "merma")   irAMerma();
   else if (modo === "venta")   irAVentaDia();
+  else if (modo === "hist")    irAHistorialVenta();
+  else if (modo === "aparte")  irAAparte();
 }
 
 // Botones de dueño: primero Face ID (si esta activado), si no, el PIN
@@ -5643,6 +6162,8 @@ function handlePress(mxRaw, myRaw) {
   else if (pantalla === 11)   { pressProduccion(mx, my); }
   else if (pantalla === 12)   { pressInventario(mx, my); }
   else if (pantalla === 14)   { pressVentaDia(mx, my); }
+  else if (pantalla === 15)   { pressHistorialVenta(mx, my); }
+  else if (pantalla === 16)   { pressAparte(mx, my); }
   else                        { pressMerma(mx, my); }
 }
 
